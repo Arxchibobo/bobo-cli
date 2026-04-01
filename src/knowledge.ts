@@ -3,10 +3,10 @@ import { join } from 'node:path';
 import { loadConfig, resolveKnowledgeDir } from './config.js';
 
 // Files that are always loaded into system prompt
-const ALWAYS_LOAD = ['system.md', 'rules.md'];
+const ALWAYS_LOAD = ['system.md', 'rules.md', 'agent-directives.md'];
 
 // Files loaded on-demand based on task context
-const ON_DEMAND = ['engineering.md', 'error-catalog.md', 'verification.md', 'task-router.md', 'dream.md'];
+const ON_DEMAND = ['engineering.md', 'error-catalog.md', 'verification.md', 'task-router.md', 'dream.md', 'advanced-patterns.md'];
 
 // Keywords that trigger on-demand loading
 const TRIGGER_MAP: Record<string, string[]> = {
@@ -14,7 +14,8 @@ const TRIGGER_MAP: Record<string, string[]> = {
   'error-catalog.md': ['错误', 'error', 'bug', '调试', 'debug', '报错', 'fail', '修复', 'fix'],
   'verification.md': ['测试', 'test', '验证', 'verify', '检查', 'check', '确认'],
   'task-router.md': [],
-  'dream.md': ['记忆', 'memory', '整理', 'dream', '回顾', '瘦身', 'compact'], // Only loaded programmatically
+  'dream.md': ['记忆', 'memory', '整理', 'dream', '回顾', '瘦身', 'compact'],
+  'advanced-patterns.md': ['架构', 'architecture', '子代理', 'agent', '并行', 'parallel', 'compact', '压缩', '记忆类型'], // Only loaded programmatically
 };
 
 export interface KnowledgeOptions {
