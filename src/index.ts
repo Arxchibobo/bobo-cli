@@ -17,6 +17,9 @@ import {
 } from './config.js';
 import { runAgent } from './agent.js';
 import { listKnowledgeFiles } from './knowledge.js';
+import { listSkills, setSkillEnabled, initSkills } from './skills.js';
+import { initProject } from './project.js';
+import { getCurrentPlan, resetPlan } from './planner.js';
 import { printWelcome, printError, printSuccess, printLine, printWarning } from './ui.js';
 import chalk from 'chalk';
 import { existsSync, mkdirSync, copyFileSync, readdirSync } from 'node:fs';
@@ -121,6 +124,9 @@ program
       }
     }
 
+    // Initialize skills
+    initSkills();
+
     printSuccess(`Initialized ${getConfigDir()}`);
     printLine(`知识库: ${knowledgeDir}`);
     printWarning('记得配置 API Key: bobo config set apiKey <your-key>');
@@ -140,6 +146,52 @@ program
       console.log(`  ${typeIcon} ${f.file} [${sourceTag}] (${f.type})`);
     }
     console.log(chalk.dim('\n  🔵 always-load  🟡 on-demand  🟢 custom\n'));
+  });
+
+// ─── Skill subcommand ────────────────────────────────────────
+
+const skillCmd = program.command('skill').description('Skill 管理');
+
+skillCmd
+  .command('list')
+  .description('列出所有 Skill')
+  .action(() => {
+    const skills = listSkills();
+    console.log(chalk.cyan.bold('\n🧩 Skills:\n'));
+    for (const s of skills) {
+      const icon = s.enabled ? '✅' : '❌';
+      const typeTag = s.type === 'builtin' ? chalk.dim('builtin') : chalk.green('custom');
+      console.log(`  ${icon} ${chalk.bold(s.name)} [${typeTag}] — ${s.description}`);
+    }
+    console.log();
+  });
+
+skillCmd
+  .command('enable <name>')
+  .description('启用 Skill')
+  .action((name: string) => {
+    const result = setSkillEnabled(name, true);
+    console.log(result);
+  });
+
+skillCmd
+  .command('disable <name>')
+  .description('禁用 Skill')
+  .action((name: string) => {
+    const result = setSkillEnabled(name, false);
+    console.log(result);
+  });
+
+// ─── Project subcommand ──────────────────────────────────────
+
+const projectCmd = program.command('project').description('项目管理');
+
+projectCmd
+  .command('init')
+  .description('在当前目录初始化 .bobo/ 项目配置')
+  .action(() => {
+    const result = initProject();
+    printSuccess(result);
   });
 
 // ─── One-shot mode ───────────────────────────────────────────
@@ -210,6 +262,7 @@ async function runRepl(): Promise<void> {
 
     if (input === '/clear') {
       history = [];
+      resetPlan();
       printSuccess('对话历史已清空');
       rl.prompt();
       continue;
@@ -223,12 +276,12 @@ async function runRepl(): Promise<void> {
     }
 
     if (input === '/compact') {
-      // Keep only last 4 user-assistant pairs
-      const userMsgs = history.filter(m => m.role === 'user');
-      if (userMsgs.length > 4) {
-        const lastN = history.slice(-8);
-        history = lastN;
-        printSuccess(`上下文已压缩: 保留最近 ${Math.min(4, userMsgs.length)} 轮对话`);
+      const userCount = history.filter(m => m.role === 'user').length;
+      if (userCount > 4) {
+        // Keep only last few exchanges
+        const keep = 8;
+        history = history.slice(-keep);
+        printSuccess(`上下文已压缩: 保留最近对话`);
       } else {
         printWarning('对话很短，无需压缩');
       }
@@ -237,11 +290,18 @@ async function runRepl(): Promise<void> {
     }
 
     if (input === '/status') {
-      const config = loadConfig();
+      const cfg = loadConfig();
       printLine(chalk.cyan('📊 Session Status:'));
-      printLine(`  Model: ${config.model}`);
+      printLine(`  Model: ${cfg.model}`);
       printLine(`  Turns: ${history.filter(m => m.role === 'user').length}`);
       printLine(`  Messages: ${history.length}`);
+      printLine(`  CWD: ${process.cwd()}`);
+      rl.prompt();
+      continue;
+    }
+
+    if (input === '/plan') {
+      printLine(getCurrentPlan());
       rl.prompt();
       continue;
     }
@@ -256,13 +316,25 @@ async function runRepl(): Promise<void> {
       continue;
     }
 
+    if (input === '/skills') {
+      const skills = listSkills();
+      for (const s of skills) {
+        const icon = s.enabled ? '✅' : '❌';
+        printLine(`  ${icon} ${s.name} — ${s.description}`);
+      }
+      rl.prompt();
+      continue;
+    }
+
     if (input === '/help') {
       printLine(chalk.cyan('内置命令:'));
       printLine('  /clear     — 清空对话历史');
-      printLine('  /compact   — 压缩上下文（保留最近对话）');
+      printLine('  /compact   — 压缩上下文');
       printLine('  /history   — 查看对话轮数');
       printLine('  /status    — 查看会话状态');
-      printLine('  /knowledge — 查看加载的知识库');
+      printLine('  /plan      — 查看当前任务计划');
+      printLine('  /knowledge — 查看知识库');
+      printLine('  /skills    — 查看 Skill 列表');
       printLine('  /quit      — 退出');
       printLine('  /help      — 显示帮助');
       rl.prompt();

@@ -3,11 +3,13 @@ import { resolve, dirname } from 'node:path';
 import { execSync } from 'node:child_process';
 import { glob } from 'glob';
 import { saveMemory, searchMemory } from '../memory.js';
+import { plannerToolDefinitions, executePlannerTool, isPlannerTool } from '../planner.js';
+import { webToolDefinitions, executeWebTool, isWebTool } from '../web.js';
 import type { ChatCompletionTool } from 'openai/resources/index.js';
 
-// ─── Tool Definitions (OpenAI format) ────────────────────────
+// ─── Core Tool Definitions ───────────────────────────────────
 
-export const toolDefinitions: ChatCompletionTool[] = [
+const coreToolDefinitions: ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
@@ -168,10 +170,23 @@ export const toolDefinitions: ChatCompletionTool[] = [
   },
 ];
 
-// ─── Tool Execution ──────────────────────────────────────────
+// ─── Combined Tool Definitions ───────────────────────────────
+
+export const toolDefinitions: ChatCompletionTool[] = [
+  ...coreToolDefinitions,
+  ...plannerToolDefinitions,
+  ...webToolDefinitions,
+];
+
+// ─── Unified Tool Execution ──────────────────────────────────
 
 export function executeTool(name: string, args: Record<string, unknown>): string {
   try {
+    // Check delegated tools first
+    if (isPlannerTool(name)) return executePlannerTool(name, args);
+    if (isWebTool(name)) return executeWebTool(name, args);
+
+    // Core tools
     switch (name) {
       case 'read_file': return readFile(args);
       case 'write_file': return writeFile(args);
@@ -189,6 +204,8 @@ export function executeTool(name: string, args: Record<string, unknown>): string
     return `Error: ${e instanceof Error ? e.message : String(e)}`;
   }
 }
+
+// ─── Core Tool Implementations ───────────────────────────────
 
 function resolvePath(p: string): string {
   return resolve(process.cwd(), p);
@@ -296,6 +313,8 @@ function shellExec(args: Record<string, unknown>): string {
 
 // ─── Memory Tool Implementations ─────────────────────────────
 
+type MemoryEntry = { category: 'user' | 'feedback' | 'project' | 'reference' | 'experience'; content: string; timestamp: string };
+
 function saveMemoryTool(args: Record<string, unknown>): string {
   const now = new Date();
   const timestamp = now.toISOString().split('T')[0] + ' ' + now.toTimeString().split(' ')[0];
@@ -305,8 +324,6 @@ function saveMemoryTool(args: Record<string, unknown>): string {
     timestamp,
   });
 }
-
-type MemoryEntry = { category: 'user' | 'feedback' | 'project' | 'reference' | 'experience'; content: string; timestamp: string };
 
 function searchMemoryTool(args: Record<string, unknown>): string {
   return searchMemory(args.query as string);
@@ -333,7 +350,7 @@ function gitDiff(args: Record<string, unknown>): string {
   let cmd = 'git diff';
   if (staged) cmd += ' --staged';
   if (ref) cmd += ` ${ref}`;
-  cmd += ' --stat'; // Start with stat for overview
+  cmd += ' --stat';
 
   try {
     const stat = execSync(cmd, { cwd, encoding: 'utf-8', timeout: 10000 });

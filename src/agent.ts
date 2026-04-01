@@ -6,6 +6,8 @@ import type {
 import { loadConfig } from './config.js';
 import { loadKnowledge } from './knowledge.js';
 import { loadMemory } from './memory.js';
+import { loadSkillPrompts } from './skills.js';
+import { loadProjectKnowledge } from './project.js';
 import { toolDefinitions, executeTool } from './tools/index.js';
 import { printStreaming, printToolCall, printToolResult, printError, printLine } from './ui.js';
 
@@ -30,13 +32,28 @@ export async function runAgent(
     baseURL: config.baseUrl,
   });
 
-  // Load knowledge with context-aware on-demand loading
+  // Build system prompt with all context layers
+  const extraParts: string[] = [];
+
+  // Layer 1: Persistent memory
   const memory = loadMemory();
-  const extraContext = memory ? `# 你的记忆\n\n${memory}` : undefined;
+  if (memory) extraParts.push(`# 你的记忆\n\n${memory}`);
+
+  // Layer 2: Active skills
+  const skillPrompts = loadSkillPrompts();
+  if (skillPrompts) extraParts.push(skillPrompts);
+
+  // Layer 3: Project context
+  const projectKnowledge = loadProjectKnowledge();
+  if (projectKnowledge) extraParts.push(`# 项目上下文\n\n${projectKnowledge}`);
+
+  // Layer 4: Working directory info
+  extraParts.push(`# Environment\n\nWorking directory: ${process.cwd()}`);
+
   const systemPrompt = loadKnowledge({
     userMessage,
     loadAll: history.length === 0,
-    extraContext,
+    extraContext: extraParts.join('\n\n---\n\n'),
   });
 
   const messages: ChatCompletionMessageParam[] = [

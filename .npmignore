@@ -1,0 +1,6 @@
+src/
+tsconfig.json
+TASK_PLAN.md
+.bobo/
+*.ts
+!dist/**
