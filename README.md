@@ -2,121 +2,193 @@
 
 > 大波比 — 便携式 AI 工程助手 CLI
 
-把 Claude Code 的架构能力、Skill 体系和工程化方法论塞进一个可移植的 CLI 工具。
+把当前 `main` 分支上的 REPL/agent 产品能力，与结构化知识库、规则系统、技能依赖解析、项目脚手架能力整合到一个可发布的 CLI 中。
+
+## 现在这个版本包含什么
+
+### 1. 交互式 AI 工程助手
+默认运行 `bobo` 会进入 REPL，支持：
+- 一次性执行 prompt
+- 持续对话
+- `/compact` 九段式上下文压缩
+- `/dream` 记忆整理
+- `/plan` 查看任务计划
+- 工具调用（文件、git、web、memory、planner）
+
+### 2. 结构化知识库系统
+当前 bundled knowledge:
+- **Rules**: 15
+- **Skills**: 125
+- **Workflows**: 6
+- **Memory templates**: 5
+
+支持：
+- `bobo kb stats`
+- `bobo kb search <query>`
+- `bobo rules show <id>`
+- `bobo skills deps <id>`
+
+### 3. 工程体系复用能力
+- skill dependency resolution
+- skill bundle/export/import
+- project scaffold (`template project`)
+- extracted rules / workflows / memory templates
 
 ## 安装
 
+### 本地开发
 ```bash
-git clone https://github.com/Arxchibobo/bobo-cli.git
-cd bobo-cli
-npm install && npm run build
-npm link  # 全局安装 bobo 命令
+npm install
+npm run build
+node dist/index.js --help
 ```
+
+### 全局使用
+```bash
+npm install -g .
+bobo --help
+```
+
+> Node.js >= 18/20+ 推荐（当前项目使用现代 ESM + TypeScript）
 
 ## 快速开始
 
+### REPL 模式
 ```bash
-# 初始化
-bobo init
-bobo config set apiKey sk-xxx
-
-# 一次性执行
-bobo "解释这个 codebase 的架构"
-
-# 交互模式（REPL）
 bobo
 ```
 
-## 架构
-
-```
-bobo CLI v0.8.0
-│
-├── Knowledge System (9 files)
-│   ├── Always-load: system.md, rules.md, agent-directives.md
-│   └── On-demand: engineering, error-catalog, verification,
-│                  task-router, dream, advanced-patterns
-│
-├── Skill System (47 skills)
-│   ├── 2 Builtin: coding, research
-│   ├── 7 Core enabled: adversarial-verification, context-compressor,
-│   │   context-budget-analyzer, proactive-self-improving, high-agency,
-│   │   memory-manager, deep-research
-│   └── 38 On-demand: ljg-*, nano-banana-pro, scrapling, semrush...
-│
-├── Tool System (18 tools)
-│   ├── File: read, write, edit, search, list_directory
-│   ├── Shell: shell
-│   ├── Memory: save_memory, search_memory
-│   ├── Git: status, diff, log, commit, push
-│   ├── Planner: create_plan, update_plan, show_plan
-│   └── Web: web_search, web_fetch
-│
-├── Memory System
-│   ├── memory.md (5KB cap, auto-slim, 4-type taxonomy)
-│   ├── memory/*.md (daily logs)
-│   └── .learnings/ (corrections, changelog)
-│
-├── Project System (.bobo/)
-│   └── Auto-detects AGENTS.md, CLAUDE.md, CONVENTIONS.md
-│
-└── Context Management
-    ├── On-demand knowledge loading (keyword triggers)
-    ├── Context decay detection (10+ turns warning)
-    └── Nine-section compact (/compact)
+### 一次性执行
+```bash
+bobo "解释这个 codebase 的架构"
 ```
 
-## System Prompt 注入顺序
+### 查看知识库统计
+```bash
+bobo kb stats
+```
 
-1. **Knowledge** — 人格 + 规则 + 工程方法论
-2. **Skills** — 启用的 Skill 行为指令
-3. **Memory** — 持久记忆（偏好/纠正/经验）
-4. **Project** — 项目级配置和规则
-5. **Environment** — 工作目录 + Context decay warning
+### 查看规则
+```bash
+bobo rules show blocking-rules
+```
 
-## CLI 命令
+### 查看技能依赖
+```bash
+bobo skills deps review-with-security
+```
+
+### 生成项目脚手架
+```bash
+bobo template project --dir ./my-project --name "My Project"
+```
+
+## 当前命令体系
+
+### 旧主产品命令（保留）
+```bash
+bobo config set <key> <value>
+bobo config get <key>
+bobo config list
+bobo init
+bobo knowledge
+bobo skill list
+bobo skill enable <name>
+bobo skill disable <name>
+bobo skill import <path>
+bobo project init
+```
+
+### 新结构化命令（已接入 main）
+```bash
+bobo kb stats
+bobo kb search <query>
+bobo rules list
+bobo rules show <id>
+bobo rules search <query>
+bobo skills list
+bobo skills show <id>
+bobo skills search <query>
+bobo skills deps <id>
+bobo skills bundle <id>
+bobo skills export <id> --output ./skill.md
+bobo skills import ./skill.md
+bobo template skill --name my-new-skill
+bobo template rule --name my-new-rule
+bobo template project --dir ./my-project --name "My Project"
+```
+
+## 知识来源模型
+
+### 旧知识层（main 原有）
+用于 REPL 的 prompt 注入与 on-demand 加载：
+- `knowledge/system.md`
+- `knowledge/rules.md`
+- `knowledge/agent-directives.md`
+- `knowledge/engineering.md`
+- `knowledge/error-catalog.md`
+- `knowledge/verification.md`
+- `knowledge/task-router.md`
+- `knowledge/dream.md`
+- `knowledge/advanced-patterns.md`
+
+### 新结构化知识层（已并入）
+用于搜索 / 依赖解析 / scaffold / 结构化访问：
+- `knowledge/index.json`
+- `knowledge/rules/*.md`
+- `knowledge/skills/*.md`
+- `knowledge/workflows/*.md`
+- `knowledge/memory/*.md`
+
+更新流程：
+```bash
+SOURCE_ROOT="E:/Bobo's Coding cache" npm run kb:extract
+npm run kb:validate
+```
+
+## Project Scaffold
+
+`bobo template project` 会生成：
+
+```text
+.claude/
+├── CLAUDE.md
+├── settings.json
+├── rules/
+│   ├── core/
+│   └── domain/
+└── skills/
+```
+
+适合把当前工程体系移植到新项目。
+
+## 开发与验证
 
 ```bash
-bobo config set <key> <value>   # 配置
-bobo config list                # 查看配置
-bobo init                       # 初始化 ~/.bobo/
-bobo knowledge                  # 查看知识库
-bobo skill list                 # 列出所有 Skill
-bobo skill enable <name>        # 启用 Skill
-bobo skill disable <name>       # 禁用 Skill
-bobo skill import <path>        # 从 OpenClaw 导入 Skill
-bobo project init               # 初始化项目 .bobo/
+npm run build
+npm test
+npm run kb:validate
+npm run pack:check
 ```
 
-## REPL 命令
+当前测试覆盖：
+- main baseline CLI
+- structured knowledge commands
+- structured skills + template flows
 
-```
-/clear     — 清空对话历史
-/compact   — 九段式上下文压缩
-/dream     — 记忆整理（整合 + 晋升 + 清理）
-/status    — 会话状态
-/plan      — 查看任务计划
-/knowledge — 查看知识库
-/skills    — 查看 Skill 列表
-/help      — 帮助
-/quit      — 退出
-```
+## 当前状态
 
-## 工程知识体系
+已完成：
+- main 原 REPL/agent CLI 保持可用
+- structured knowledge engine 接入 main
+- rules / kb / skills deps / template project 已接入 main
+- npm packaging 基本可用
+- welcome 界面统一包装
 
-来源：Claude Code 源码分析 + CLAUDE.MD 机械性覆盖规则
-
-| 知识文件 | 内容 | 加载方式 |
-|---------|------|---------|
-| system.md | 人格、工作模式、纠正检测、主动记忆 | always |
-| rules.md | 代码规范、诚实报告、git 规范 | always |
-| agent-directives.md | 10 条机械性覆盖规则（Step 0、分阶段执行等）| always |
-| engineering.md | 任务路由、搜索策略、三文件模式 | on-demand |
-| error-catalog.md | E001-E010 高频错误速查 | on-demand |
-| verification.md | 对抗性验证协议 | on-demand |
-| task-router.md | 任务分类策略 | on-demand |
-| dream.md | Dream 记忆整理协议 | on-demand |
-| advanced-patterns.md | 记忆类型学、九段式详细版、子代理架构 | on-demand |
+后续可继续增强：
+- workflow / memory 结构化命令完全接入 main
+- doctor / json output / shell completion
+- npm 正式发布
 
 ## License
 

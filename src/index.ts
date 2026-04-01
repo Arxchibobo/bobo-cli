@@ -21,6 +21,10 @@ import { listSkills, setSkillEnabled, initSkills, importSkills } from './skills.
 import { initProject } from './project.js';
 import { getCurrentPlan, resetPlan } from './planner.js';
 import { printWelcome, printError, printSuccess, printLine, printWarning } from './ui.js';
+import { registerKnowledgeCommand } from './knowledge-commands.js';
+import { registerRulesCommand } from './rules-commands.js';
+import { registerStructuredSkillsCommand } from './structured-skills-commands.js';
+import { registerStructuredTemplateCommand } from './structured-template-commands.js';
 import chalk from 'chalk';
 import { existsSync, mkdirSync, copyFileSync, readdirSync } from 'node:fs';
 
@@ -193,6 +197,11 @@ skillCmd
     const result = importSkills(resolved);
     console.log(result);
   });
+
+registerKnowledgeCommand(program);
+registerRulesCommand(program);
+registerStructuredSkillsCommand(program);
+registerStructuredTemplateCommand(program);
 
 // ─── Project subcommand ──────────────────────────────────────
 

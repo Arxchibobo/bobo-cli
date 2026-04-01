@@ -39,8 +39,22 @@ export function printToolResult(result: string): void {
 }
 
 export function printWelcome(): void {
-  console.log(chalk.cyan.bold('\n🐕 大波比 CLI — 你的便携 AI 助手'));
-  console.log(chalk.dim('输入问题开始对话，Ctrl+D 退出，Ctrl+C 取消当前请求\n'));
+  const border = chalk.cyan('╭──────────────────────────────────────────────────────────────╮');
+  const footer = chalk.cyan('╰──────────────────────────────────────────────────────────────╯');
+  const title = chalk.cyan.bold('🐕  大波比 CLI');
+  const subtitle = chalk.dim('便携式 AI 工程助手 · REPL + 结构化知识库 + Scaffold');
+  const commands = chalk.dim('试试: /help  ·  bobo kb stats  ·  bobo rules show blocking-rules');
+  const controls = chalk.dim('输入问题开始对话，Ctrl+D 退出，Ctrl+C 取消当前请求');
+
+  console.log('');
+  console.log(border);
+  console.log(chalk.cyan('│ ') + title.padEnd(58) + chalk.cyan('│'));
+  console.log(chalk.cyan('│ ') + subtitle.padEnd(58) + chalk.cyan('│'));
+  console.log(chalk.cyan('│ ') + ''.padEnd(58) + chalk.cyan('│'));
+  console.log(chalk.cyan('│ ') + commands.padEnd(58) + chalk.cyan('│'));
+  console.log(chalk.cyan('│ ') + controls.padEnd(58) + chalk.cyan('│'));
+  console.log(footer);
+  console.log('');
 }
 
 function truncate(s: string, maxLen: number): string {

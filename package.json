@@ -10,27 +10,51 @@
   "files": [
     "dist/",
     "knowledge/",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "kb:extract": "node scripts/extract-knowledge.mjs",
+    "kb:validate": "node scripts/validate-knowledge.mjs",
+    "pack:check": "npm pack --dry-run",
+    "prepack": "npm run build"
   },
-  "keywords": ["ai", "cli", "assistant", "agent", "llm", "engineering"],
+  "keywords": [
+    "ai",
+    "cli",
+    "assistant",
+    "agent",
+    "llm",
+    "engineering"
+  ],
   "author": "bobooo",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Arxchibobo/bobo-cli.git"
+  },
+  "homepage": "https://github.com/Arxchibobo/bobo-cli#readme",
+  "bugs": {
+    "url": "https://github.com/Arxchibobo/bobo-cli/issues"
+  },
   "dependencies": {
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "glob": "^11.0.0",
+    "gray-matter": "^4.0.3",
     "marked": "^14.0.0",
     "marked-terminal": "^7.2.0",
-    "openai": "^4.73.0"
+    "openai": "^4.73.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.2"
   }
 }
