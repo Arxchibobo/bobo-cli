@@ -1,6 +1,8 @@
 src/
 tsconfig.json
 TASK_PLAN.md
+ARCHITECTURE_AUDIT.md
+GAP_ANALYSIS.md
 .bobo/
 *.ts
 !dist/**

@@ -7,6 +7,11 @@
   "bin": {
     "bobo": "dist/index.js"
   },
+  "files": [
+    "dist/",
+    "knowledge/",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
