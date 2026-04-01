@@ -200,6 +200,22 @@ const coreToolDefinitions: ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'git_push',
+      description: 'Push commits to remote repository.',
+      parameters: {
+        type: 'object',
+        properties: {
+          remote: { type: 'string', description: 'Remote name (default: origin)' },
+          branch: { type: 'string', description: 'Branch name (default: current branch)' },
+          cwd: { type: 'string', description: 'Repository path (default: CWD)' },
+        },
+        required: [],
+      },
+    },
+  },
 ];
 
 // ─── Combined Tool Definitions ───────────────────────────────
@@ -232,6 +248,7 @@ export function executeTool(name: string, args: Record<string, unknown>): string
       case 'git_diff': return gitDiff(args);
       case 'git_log': return gitLog(args);
       case 'git_commit': return gitCommit(args);
+      case 'git_push': return gitPush(args);
       default: return `Error: Unknown tool "${name}"`;
     }
   } catch (e) {
@@ -427,5 +444,23 @@ function gitCommit(args: Record<string, unknown>): string {
   } catch (e: unknown) {
     const err = e as { stdout?: string; stderr?: string };
     return `Git commit error: ${err.stdout || err.stderr || (e as Error).message}`.trim();
+  }
+}
+
+function gitPush(args: Record<string, unknown>): string {
+  const cwd = args.cwd ? resolvePath(args.cwd as string) : process.cwd();
+  const remote = (args.remote as string) || 'origin';
+  const branch = args.branch as string | undefined;
+
+  try {
+    const cmd = branch ? `git push ${remote} ${branch}` : `git push ${remote}`;
+    const result = execSync(cmd, { cwd, encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] });
+    return result.trim() || 'Push successful';
+  } catch (e: unknown) {
+    const err = e as { stdout?: string; stderr?: string };
+    // git push outputs to stderr on success
+    const output = (err.stderr || '') + (err.stdout || '');
+    if (output.includes('->')) return output.trim();
+    return `Git push error: ${output || (e as Error).message}`.trim();
   }
 }

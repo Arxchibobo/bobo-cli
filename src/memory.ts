@@ -100,27 +100,50 @@ export function saveMemory(entry: MemoryEntry): string {
 }
 
 /**
- * Search memory for relevant entries
+ * Search memory for relevant entries (multi-keyword scoring)
  */
 export function searchMemory(query: string): string {
   const { memoryFile, memoryDir } = getMemoryPaths();
-  const results: string[] = [];
   const queryLower = query.toLowerCase();
   const keywords = queryLower.split(/\s+/).filter(k => k.length > 1);
 
-  // Search main memory
-  if (existsSync(memoryFile)) {
-    const content = readFileSync(memoryFile, 'utf-8');
+  interface ScoredResult {
+    source: string;
+    line: number;
+    text: string;
+    score: number;
+  }
+
+  const results: ScoredResult[] = [];
+
+  function scoreLines(content: string, source: string): void {
     const lines = content.split('\n');
     for (let i = 0; i < lines.length; i++) {
       const lineLower = lines[i].toLowerCase();
-      if (keywords.some(kw => lineLower.includes(kw))) {
-        // Include surrounding context
-        const start = Math.max(0, i - 1);
-        const end = Math.min(lines.length, i + 2);
-        results.push(`[memory.md:${i + 1}] ${lines.slice(start, end).join('\n')}`);
+      if (!lineLower.trim()) continue;
+
+      // Score: number of matching keywords + bonus for exact phrase match
+      let score = 0;
+      for (const kw of keywords) {
+        if (lineLower.includes(kw)) score++;
       }
+      if (score === 0) continue;
+
+      // Bonus for exact phrase match
+      if (lineLower.includes(queryLower)) score += keywords.length;
+
+      // Include context (1 line before, 1 after)
+      const start = Math.max(0, i - 1);
+      const end = Math.min(lines.length, i + 2);
+      const text = lines.slice(start, end).join('\n');
+
+      results.push({ source, line: i + 1, text, score });
     }
+  }
+
+  // Search main memory
+  if (existsSync(memoryFile)) {
+    scoreLines(readFileSync(memoryFile, 'utf-8'), 'memory.md');
   }
 
   // Search daily logs (last 7 days)
@@ -131,14 +154,7 @@ export function searchMemory(query: string): string {
       .slice(-7);
 
     for (const file of files) {
-      const content = readFileSync(join(memoryDir, file), 'utf-8');
-      const lines = content.split('\n');
-      for (let i = 0; i < lines.length; i++) {
-        const lineLower = lines[i].toLowerCase();
-        if (keywords.some(kw => lineLower.includes(kw))) {
-          results.push(`[${file}:${i + 1}] ${lines[i]}`);
-        }
-      }
+      scoreLines(readFileSync(join(memoryDir, file), 'utf-8'), file);
     }
   }
 
@@ -146,7 +162,23 @@ export function searchMemory(query: string): string {
     return `No memory entries found for: "${query}"`;
   }
 
-  return results.slice(0, 10).join('\n\n');
+  // Sort by score (highest first), deduplicate overlapping results
+  results.sort((a, b) => b.score - a.score);
+
+  const seen = new Set<string>();
+  const deduped: ScoredResult[] = [];
+  for (const r of results) {
+    const key = `${r.source}:${r.line}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduped.push(r);
+    }
+  }
+
+  return deduped
+    .slice(0, 10)
+    .map(r => `[${r.source}:${r.line}] (score:${r.score}) ${r.text}`)
+    .join('\n\n');
 }
 
 /**

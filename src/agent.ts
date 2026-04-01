@@ -32,23 +32,28 @@ export async function runAgent(
     baseURL: config.baseUrl,
   });
 
-  // Build system prompt with all context layers
+  // Build system prompt with all context layers (order matters)
   const extraParts: string[] = [];
 
-  // Layer 1: Persistent memory
-  const memory = loadMemory();
-  if (memory) extraParts.push(`# 你的记忆\n\n${memory}`);
-
-  // Layer 2: Active skills
+  // Layer 1: Active skills (behavior rules — highest priority after knowledge)
   const skillPrompts = loadSkillPrompts();
   if (skillPrompts) extraParts.push(skillPrompts);
 
-  // Layer 3: Project context
+  // Layer 2: Persistent memory (data — lower priority than rules)
+  const memory = loadMemory();
+  if (memory) extraParts.push(`# 你的记忆\n\n${memory}`);
+
+  // Layer 3: Project context (local project config + auto-detected files)
   const projectKnowledge = loadProjectKnowledge();
   if (projectKnowledge) extraParts.push(`# 项目上下文\n\n${projectKnowledge}`);
 
-  // Layer 4: Working directory info
-  extraParts.push(`# Environment\n\nWorking directory: ${process.cwd()}`);
+  // Layer 4: Environment + context decay warning
+  const turnCount = history.filter(m => m.role === 'user').length;
+  let envInfo = `# Environment\n\nWorking directory: ${process.cwd()}\nConversation turns: ${turnCount}`;
+  if (turnCount >= 10) {
+    envInfo += '\n\n⚠️ Context Decay Warning: 对话已超过 10 轮，编辑文件前必须重新读取确认内容。不要信任你对文件的记忆。';
+  }
+  extraParts.push(envInfo);
 
   const systemPrompt = loadKnowledge({
     userMessage,

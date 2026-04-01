@@ -13,9 +13,9 @@ const TRIGGER_MAP: Record<string, string[]> = {
   'engineering.md': ['规划', '计划', '任务', '步骤', '复杂', 'plan', 'task', 'debug', '搜索', 'search'],
   'error-catalog.md': ['错误', 'error', 'bug', '调试', 'debug', '报错', 'fail', '修复', 'fix'],
   'verification.md': ['测试', 'test', '验证', 'verify', '检查', 'check', '确认'],
-  'task-router.md': [],
+  'task-router.md': ['路由', 'route', '分类', '策略', 'strategy', '怎么做', '哪种', '方案'],
   'dream.md': ['记忆', 'memory', '整理', 'dream', '回顾', '瘦身', 'compact'],
-  'advanced-patterns.md': ['架构', 'architecture', '子代理', 'agent', '并行', 'parallel', 'compact', '压缩', '记忆类型'], // Only loaded programmatically
+  'advanced-patterns.md': ['架构', 'architecture', '子代理', 'agent', '并行', 'parallel', 'compact', '压缩', '记忆类型', 'coordinator', '分工', '委派', 'delegate'], // Only loaded programmatically
 };
 
 export interface KnowledgeOptions {

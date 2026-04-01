@@ -138,9 +138,9 @@ export function listSkills(): Skill[] {
         const fmMatch = content.match(/^description:\s*(.+)/m);
         const firstLine = content.split('\n').find(l => l.trim() && !l.startsWith('#') && !l.startsWith('---') && !l.startsWith('```') && l.trim().length > 15);
 
-        if (fmMatch) desc = fmMatch[1].trim().replace(/^["']|["']$/g, '');
-        else if (h1Match) desc = h1Match[1].trim().slice(0, 80);
-        else if (firstLine) desc = firstLine.trim().slice(0, 80);
+        if (fmMatch) desc = fmMatch[1].trim().replace(/^["']|["']$/g, '').slice(0, 120);
+        else if (h1Match) desc = h1Match[1].trim().slice(0, 120);
+        else if (firstLine) desc = firstLine.trim().slice(0, 120);
 
         skills.push({
           name: entry,

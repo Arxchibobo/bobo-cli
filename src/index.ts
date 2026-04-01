@@ -290,11 +290,32 @@ async function runRepl(): Promise<void> {
     if (input === '/compact') {
       const userCount = history.filter(m => m.role === 'user').length;
       if (userCount > 4) {
-        // Nine-section compression: keep essential context
-        const keep = 8;
-        history = history.slice(-keep);
-        printSuccess('上下文已压缩（九段式）: 保留最近对话');
-        printLine(chalk.dim('  保留: 最近请求 + 技术上下文 + 工作状态'));
+        // Use agent to do real nine-section compression
+        printLine(chalk.dim('执行九段式上下文压缩...'));
+        abortController = new AbortController();
+        try {
+          const compactResult = await runAgent(
+            '执行九段式上下文压缩。分析到目前为止的对话，生成结构化摘要包含：' +
+            '1.主要请求和意图 2.关键技术概念 3.文件和代码 4.错误和修复 5.问题解决 ' +
+            '6.所有用户消息（关键！） 7.待办任务 8.当前工作状态 9.下一步（附原文引用）。' +
+            '直接输出摘要，不要调用任何工具。',
+            history,
+            { signal: abortController.signal },
+          );
+          // Replace history with the compact summary
+          history = [
+            { role: 'user', content: '以下是之前对话的九段式压缩摘要，请基于此继续工作。' },
+            { role: 'assistant', content: compactResult.response },
+          ];
+          printSuccess('✅ 上下文已压缩（九段式），保留结构化摘要');
+        } catch (e) {
+          if ((e as Error).message !== 'Aborted') {
+            // Fallback to simple truncation
+            history = history.slice(-8);
+            printSuccess('上下文已压缩（简单截断）');
+          }
+        }
+        abortController = null;
       } else {
         printWarning('对话很短，无需压缩');
       }
