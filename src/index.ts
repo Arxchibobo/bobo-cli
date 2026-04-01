@@ -17,7 +17,7 @@ import {
 } from './config.js';
 import { runAgent } from './agent.js';
 import { listKnowledgeFiles } from './knowledge.js';
-import { listSkills, setSkillEnabled, initSkills } from './skills.js';
+import { listSkills, setSkillEnabled, initSkills, importSkills } from './skills.js';
 import { initProject } from './project.js';
 import { getCurrentPlan, resetPlan } from './planner.js';
 import { printWelcome, printError, printSuccess, printLine, printWarning } from './ui.js';
@@ -179,6 +179,18 @@ skillCmd
   .description('禁用 Skill')
   .action((name: string) => {
     const result = setSkillEnabled(name, false);
+    console.log(result);
+  });
+
+skillCmd
+  .command('import <path>')
+  .description('从 OpenClaw skills 目录批量导入 Skill')
+  .action((path: string) => {
+    // Resolve ~ to home dir
+    const resolved = path.startsWith('~')
+      ? join(process.env.HOME || '', path.slice(1))
+      : path;
+    const result = importSkills(resolved);
     console.log(result);
   });
 

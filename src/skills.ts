@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, readdirSync, writeFileSync, copyFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { getConfigDir } from './config.js';
 
@@ -230,18 +230,31 @@ export function listSkills(): Skill[] {
   // Custom skills from ~/.bobo/skills/
   const skillsDir = getSkillsDir();
   if (existsSync(skillsDir)) {
-    const dirs = readdirSync(skillsDir, { withFileTypes: true })
-      .filter(d => d.isDirectory());
+    const entries = readdirSync(skillsDir);
+    for (const entry of entries) {
+      const fullPath = join(skillsDir, entry);
+      try {
+        // Use statSync to follow symlinks
+        const stat = statSync(fullPath);
+        if (!stat.isDirectory()) continue;
+      } catch { continue; }
 
-    for (const dir of dirs) {
-      const skillFile = join(skillsDir, dir.name, 'SKILL.md');
+      const skillFile = join(fullPath, 'SKILL.md');
       if (existsSync(skillFile)) {
         const content = readFileSync(skillFile, 'utf-8');
-        const descMatch = content.match(/^#\s+.+\n+(.+)/);
+        let desc = 'Custom skill';
+        const h1Match = content.match(/^#\s+.+\n+([^#\n][^\n]{10,})/m);
+        const fmMatch = content.match(/^description:\s*(.+)/m);
+        const firstLine = content.split('\n').find(l => l.trim() && !l.startsWith('#') && !l.startsWith('---') && !l.startsWith('```') && l.trim().length > 15);
+
+        if (fmMatch) desc = fmMatch[1].trim().replace(/^["']|["']$/g, '');
+        else if (h1Match) desc = h1Match[1].trim().slice(0, 80);
+        else if (firstLine) desc = firstLine.trim().slice(0, 80);
+
         skills.push({
-          name: dir.name,
-          description: descMatch?.[1] || 'Custom skill',
-          enabled: manifest.skills[dir.name]?.enabled ?? true,
+          name: entry,
+          description: desc,
+          enabled: manifest.skills[entry]?.enabled ?? true,
           type: 'custom',
           promptFile: skillFile,
         });
@@ -283,15 +296,17 @@ export function loadSkillPrompts(): string {
     }
   }
 
-  // Custom skills
+  // Custom skills (follow symlinks)
   const skillsDir = getSkillsDir();
   if (existsSync(skillsDir)) {
-    const dirs = readdirSync(skillsDir, { withFileTypes: true })
-      .filter(d => d.isDirectory());
-
-    for (const dir of dirs) {
-      if (manifest.skills[dir.name]?.enabled === false) continue;
-      const skillFile = join(skillsDir, dir.name, 'SKILL.md');
+    const entries = readdirSync(skillsDir);
+    for (const entry of entries) {
+      const fullPath = join(skillsDir, entry);
+      try {
+        if (!statSync(fullPath).isDirectory()) continue;
+      } catch { continue; }
+      if (manifest.skills[entry]?.enabled === false) continue;
+      const skillFile = join(fullPath, 'SKILL.md');
       if (existsSync(skillFile)) {
         parts.push(readFileSync(skillFile, 'utf-8').trim());
       }
@@ -299,6 +314,143 @@ export function loadSkillPrompts(): string {
   }
 
   return parts.length > 0 ? '\n\n---\n\n# Active Skills\n\n' + parts.join('\n\n---\n\n') : '';
+}
+
+/**
+ * Import OpenClaw skills from a directory into ~/.bobo/skills/
+ * Returns a report of imported/skipped skills
+ */
+export function importSkills(sourceDir: string): string {
+  const skillsDir = getSkillsDir();
+  if (!existsSync(skillsDir)) {
+    mkdirSync(skillsDir, { recursive: true });
+  }
+
+  if (!existsSync(sourceDir)) {
+    return `Source directory not found: ${sourceDir}`;
+  }
+
+  const dirs: string[] = [];
+  for (const entry of readdirSync(sourceDir)) {
+    const fullPath = join(sourceDir, entry);
+    try {
+      if (statSync(fullPath).isDirectory()) dirs.push(entry);
+    } catch { /* skip broken symlinks */ }
+  }
+
+  let imported = 0;
+  let skipped = 0;
+  let alreadyExists = 0;
+  const report: string[] = [];
+
+  // Tools that the CLI has
+  const cliTools = new Set([
+    'read_file', 'write_file', 'edit_file', 'search_files', 'list_directory',
+    'shell', 'save_memory', 'search_memory', 'git_status', 'git_diff',
+    'git_log', 'git_commit', 'create_plan', 'update_plan', 'show_plan',
+    'web_search', 'web_fetch',
+  ]);
+
+  // Tools/features that need OpenClaw-specific infrastructure
+  const incompatiblePatterns = [
+    /\bmessage\s*\(\s*{?\s*action/i,       // message tool (Slack/Telegram/etc)
+    /\bnodes\s*\(\s*{?\s*action/i,          // nodes tool (camera/screen)
+    /\bcron\s*\(\s*{?\s*action/i,           // cron tool
+    /\bcanvas\s*\(\s*{?\s*action/i,         // canvas tool
+    /\bsessions_spawn\b/i,                   // sub-agent spawning
+    /\bsessions_send\b/i,                    // inter-session messaging
+    /\bgateway\s*\(\s*{?\s*action/i,        // gateway management
+  ];
+
+  for (const dir of dirs) {
+    const skillFile = join(sourceDir, dir, 'SKILL.md');
+    if (!existsSync(skillFile)) {
+      continue;
+    }
+
+    const targetDir = join(skillsDir, dir);
+
+    // Skip if already exists
+    if (existsSync(targetDir)) {
+      alreadyExists++;
+      continue;
+    }
+
+    // Read SKILL.md to classify
+    const content = readFileSync(skillFile, 'utf-8');
+
+    // Check for incompatible patterns
+    const hasIncompatible = incompatiblePatterns.some(p => p.test(content));
+
+    // Create skill directory and copy SKILL.md
+    mkdirSync(targetDir, { recursive: true });
+
+    if (hasIncompatible) {
+      // Add compatibility note
+      const wrappedContent = `<!-- Imported from OpenClaw. Some features may require tools not available in CLI mode. -->\n\n${content}`;
+      writeFileSync(join(targetDir, 'SKILL.md'), wrappedContent);
+      report.push(`  ⚠️ ${dir} (imported with compatibility warning)`);
+    } else {
+      writeFileSync(join(targetDir, 'SKILL.md'), content);
+      report.push(`  ✅ ${dir}`);
+    }
+
+    // Copy any additional .md files in the skill directory
+    try {
+      const extraFiles = readdirSync(join(sourceDir, dir))
+        .filter(f => f.endsWith('.md') && f !== 'SKILL.md');
+      for (const f of extraFiles) {
+        const src = join(sourceDir, dir, f);
+        const dst = join(targetDir, f);
+        try {
+          if (existsSync(src) && !existsSync(dst)) {
+            const st = statSync(src);
+            if (st.size < 50000) copyFileSync(src, dst);
+          }
+        } catch { /* skip files with permission issues */ }
+      }
+
+      // Also copy references/ directory if it exists
+      const refsDir = join(sourceDir, dir, 'references');
+      if (existsSync(refsDir)) {
+        const targetRefs = join(targetDir, 'references');
+        mkdirSync(targetRefs, { recursive: true });
+        try {
+          const refFiles = readdirSync(refsDir).filter(f => f.endsWith('.md'));
+          for (const f of refFiles) {
+            try {
+              const st = statSync(join(refsDir, f));
+              if (st.size < 50000) copyFileSync(join(refsDir, f), join(targetRefs, f));
+            } catch { /* skip */ }
+          }
+        } catch { /* skip unreadable refs */ }
+      }
+    } catch { /* skip extra file copy errors */ }
+
+    imported++;
+  }
+
+  // Update manifest - all imported skills start disabled to avoid prompt bloat
+  const manifest = loadManifest();
+  for (const dir of dirs) {
+    const skillFile = join(sourceDir, dir, 'SKILL.md');
+    if (existsSync(skillFile) && !manifest.skills[dir]) {
+      manifest.skills[dir] = { enabled: false }; // Start disabled
+    }
+  }
+  saveManifest(manifest);
+
+  return [
+    `📦 Skill Import Report:`,
+    `  Imported: ${imported}`,
+    `  Already exists: ${alreadyExists}`,
+    `  Total available: ${imported + alreadyExists}`,
+    ``,
+    `Imported skills start DISABLED to avoid prompt bloat.`,
+    `Enable with: bobo skill enable <name>`,
+    ``,
+    ...(report.length > 0 ? ['Details:', ...report] : []),
+  ].join('\n');
 }
 
 /**
