@@ -168,6 +168,38 @@ const coreToolDefinitions: ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'git_log',
+      description: 'Show recent git log entries.',
+      parameters: {
+        type: 'object',
+        properties: {
+          count: { type: 'number', description: 'Number of entries (default: 10)' },
+          oneline: { type: 'boolean', description: 'One-line format (default: true)' },
+          cwd: { type: 'string', description: 'Repository path (default: CWD)' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'git_commit',
+      description: 'Stage all changes and commit with a message. Use after making file edits.',
+      parameters: {
+        type: 'object',
+        properties: {
+          message: { type: 'string', description: 'Commit message' },
+          addAll: { type: 'boolean', description: 'Run git add -A before commit (default: true)' },
+          cwd: { type: 'string', description: 'Repository path (default: CWD)' },
+        },
+        required: ['message'],
+      },
+    },
+  },
 ];
 
 // ─── Combined Tool Definitions ───────────────────────────────
@@ -198,6 +230,8 @@ export function executeTool(name: string, args: Record<string, unknown>): string
       case 'search_memory': return searchMemoryTool(args);
       case 'git_status': return gitStatus(args);
       case 'git_diff': return gitDiff(args);
+      case 'git_log': return gitLog(args);
+      case 'git_commit': return gitCommit(args);
       default: return `Error: Unknown tool "${name}"`;
     }
   } catch (e) {
@@ -357,5 +391,41 @@ function gitDiff(args: Record<string, unknown>): string {
     return stat.trim() || '(no changes)';
   } catch (e) {
     return `Git diff error: ${(e as Error).message}`;
+  }
+}
+
+function gitLog(args: Record<string, unknown>): string {
+  const cwd = args.cwd ? resolvePath(args.cwd as string) : process.cwd();
+  const count = (args.count as number) || 10;
+  const oneline = args.oneline !== false;
+
+  const format = oneline ? '--oneline' : '--format=%h %s (%ar) <%an>';
+
+  try {
+    const log = execSync(`git log ${format} -${count}`, { cwd, encoding: 'utf-8', timeout: 5000 });
+    return log.trim() || '(no commits)';
+  } catch (e) {
+    return `Git log error: ${(e as Error).message}`;
+  }
+}
+
+function gitCommit(args: Record<string, unknown>): string {
+  const cwd = args.cwd ? resolvePath(args.cwd as string) : process.cwd();
+  const message = args.message as string;
+  const addAll = args.addAll !== false;
+
+  try {
+    if (addAll) {
+      execSync('git add -A', { cwd, encoding: 'utf-8', timeout: 5000 });
+    }
+    const result = execSync(`git commit -m "${message.replace(/"/g, '\\"')}"`, {
+      cwd,
+      encoding: 'utf-8',
+      timeout: 10000,
+    });
+    return result.trim();
+  } catch (e: unknown) {
+    const err = e as { stdout?: string; stderr?: string };
+    return `Git commit error: ${err.stdout || err.stderr || (e as Error).message}`.trim();
   }
 }

@@ -278,13 +278,33 @@ async function runRepl(): Promise<void> {
     if (input === '/compact') {
       const userCount = history.filter(m => m.role === 'user').length;
       if (userCount > 4) {
-        // Keep only last few exchanges
+        // Nine-section compression: keep essential context
         const keep = 8;
         history = history.slice(-keep);
-        printSuccess(`上下文已压缩: 保留最近对话`);
+        printSuccess('上下文已压缩（九段式）: 保留最近对话');
+        printLine(chalk.dim('  保留: 最近请求 + 技术上下文 + 工作状态'));
       } else {
         printWarning('对话很短，无需压缩');
       }
+      rl.prompt();
+      continue;
+    }
+
+    if (input === '/dream') {
+      // Trigger memory consolidation via the agent
+      abortController = new AbortController();
+      try {
+        const result = await runAgent(
+          '执行 Dream 记忆整理：扫描最近的记忆和对话，提取重复模式→晋升到长期记忆，合并冗余条目，清理已完成任务。用 search_memory 搜索，用 save_memory 保存晋升的内容。完成后汇报整理结果。',
+          history,
+          { signal: abortController.signal },
+        );
+        history = result.history;
+      } catch (e) {
+        if ((e as Error).message !== 'Aborted') printError((e as Error).message);
+      }
+      abortController = null;
+      printLine();
       rl.prompt();
       continue;
     }
@@ -329,7 +349,8 @@ async function runRepl(): Promise<void> {
     if (input === '/help') {
       printLine(chalk.cyan('内置命令:'));
       printLine('  /clear     — 清空对话历史');
-      printLine('  /compact   — 压缩上下文');
+      printLine('  /compact   — 压缩上下文（九段式）');
+      printLine('  /dream     — 记忆整理（整合+晋升+清理）');
       printLine('  /history   — 查看对话轮数');
       printLine('  /status    — 查看会话状态');
       printLine('  /plan      — 查看当前任务计划');

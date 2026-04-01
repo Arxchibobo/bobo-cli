@@ -6,14 +6,15 @@ import { loadConfig, resolveKnowledgeDir } from './config.js';
 const ALWAYS_LOAD = ['system.md', 'rules.md'];
 
 // Files loaded on-demand based on task context
-const ON_DEMAND = ['engineering.md', 'error-catalog.md', 'verification.md', 'task-router.md'];
+const ON_DEMAND = ['engineering.md', 'error-catalog.md', 'verification.md', 'task-router.md', 'dream.md'];
 
 // Keywords that trigger on-demand loading
 const TRIGGER_MAP: Record<string, string[]> = {
   'engineering.md': ['规划', '计划', '任务', '步骤', '复杂', 'plan', 'task', 'debug', '搜索', 'search'],
   'error-catalog.md': ['错误', 'error', 'bug', '调试', 'debug', '报错', 'fail', '修复', 'fix'],
   'verification.md': ['测试', 'test', '验证', 'verify', '检查', 'check', '确认'],
-  'task-router.md': [], // Only loaded programmatically
+  'task-router.md': [],
+  'dream.md': ['记忆', 'memory', '整理', 'dream', '回顾', '瘦身', 'compact'], // Only loaded programmatically
 };
 
 export interface KnowledgeOptions {
