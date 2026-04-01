@@ -16,11 +16,11 @@ import {
   resolveKnowledgeDir,
 } from './config.js';
 import { runAgent } from './agent.js';
+import { listKnowledgeFiles } from './knowledge.js';
 import { printWelcome, printError, printSuccess, printLine, printWarning } from './ui.js';
 import chalk from 'chalk';
-import { existsSync, mkdirSync, copyFileSync } from 'node:fs';
+import { existsSync, mkdirSync, copyFileSync, readdirSync } from 'node:fs';
 
-// Get package version
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 let version = '0.1.0';
 try {
@@ -32,7 +32,7 @@ const program = new Command();
 
 program
   .name('bobo')
-  .description('🐕 大波比 — 便携式 AI 助手 CLI')
+  .description('🐕 大波比 — 便携式 AI 工程助手 CLI')
   .version(version)
   .argument('[prompt...]', '一次性执行的提示词')
   .action(async (promptParts: string[]) => {
@@ -44,7 +44,8 @@ program
     }
   });
 
-// Config subcommand
+// ─── Config subcommand ───────────────────────────────────────
+
 const configCmd = program.command('config').description('配置管理');
 
 configCmd
@@ -82,7 +83,8 @@ configCmd
     }
   });
 
-// Init subcommand
+// ─── Init subcommand ─────────────────────────────────────────
+
 program
   .command('init')
   .description('初始化 ~/.bobo/ 目录和知识库')
@@ -95,20 +97,49 @@ program
       mkdirSync(knowledgeDir, { recursive: true });
     }
 
-    // Copy bundled knowledge files if user doesn't have them
+    // Copy all bundled knowledge files
     const bundledDir = join(__dirname, '..', 'knowledge');
-    for (const file of ['system.md', 'rules.md']) {
-      const target = join(knowledgeDir, file);
-      const source = join(bundledDir, file);
-      if (!existsSync(target) && existsSync(source)) {
-        copyFileSync(source, target);
-        printSuccess(`Created ${target}`);
+    if (existsSync(bundledDir)) {
+      const files = readdirSync(bundledDir).filter(f => f.endsWith('.md'));
+      for (const file of files) {
+        const target = join(knowledgeDir, file);
+        const source = join(bundledDir, file);
+        if (!existsSync(target)) {
+          copyFileSync(source, target);
+          printSuccess(`Created ${target}`);
+        }
+      }
+    }
+
+    // Create memory directories
+    const memoryDir = join(getConfigDir(), 'memory');
+    const learningsDir = join(getConfigDir(), '.learnings');
+    for (const dir of [memoryDir, learningsDir]) {
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+        printSuccess(`Created ${dir}`);
       }
     }
 
     printSuccess(`Initialized ${getConfigDir()}`);
     printLine(`知识库: ${knowledgeDir}`);
     printWarning('记得配置 API Key: bobo config set apiKey <your-key>');
+  });
+
+// ─── Knowledge subcommand ────────────────────────────────────
+
+program
+  .command('knowledge')
+  .description('查看知识库信息')
+  .action(() => {
+    const files = listKnowledgeFiles();
+    console.log(chalk.cyan.bold('\n📚 知识库文件:\n'));
+    for (const f of files) {
+      const typeIcon = f.type === 'always' ? '🔵' : f.type === 'on-demand' ? '🟡' : '🟢';
+      const sourceTag = f.source === 'user' ? chalk.green('user') : chalk.dim('bundled');
+      console.log(`  ${typeIcon} ${f.file} [${sourceTag}] (${f.type})`);
+    }
+    console.log(chalk.dim('\n  🔵 always-load  🟡 on-demand  🟢 custom\n'));
   });
 
 // ─── One-shot mode ───────────────────────────────────────────
@@ -144,7 +175,6 @@ async function runRepl(): Promise<void> {
   let history: ChatCompletionMessageParam[] = [];
   let abortController: AbortController | null = null;
 
-  // Handle Ctrl+C
   rl.on('SIGINT', () => {
     if (abortController) {
       abortController.abort();
@@ -186,17 +216,55 @@ async function runRepl(): Promise<void> {
     }
 
     if (input === '/history') {
-      printLine(`对话轮数: ${Math.floor(history.length / 2)}`);
+      const turns = history.filter(m => m.role === 'user').length;
+      printLine(`对话轮数: ${turns}`);
+      rl.prompt();
+      continue;
+    }
+
+    if (input === '/compact') {
+      // Keep only last 4 user-assistant pairs
+      const userMsgs = history.filter(m => m.role === 'user');
+      if (userMsgs.length > 4) {
+        const lastN = history.slice(-8);
+        history = lastN;
+        printSuccess(`上下文已压缩: 保留最近 ${Math.min(4, userMsgs.length)} 轮对话`);
+      } else {
+        printWarning('对话很短，无需压缩');
+      }
+      rl.prompt();
+      continue;
+    }
+
+    if (input === '/status') {
+      const config = loadConfig();
+      printLine(chalk.cyan('📊 Session Status:'));
+      printLine(`  Model: ${config.model}`);
+      printLine(`  Turns: ${history.filter(m => m.role === 'user').length}`);
+      printLine(`  Messages: ${history.length}`);
+      rl.prompt();
+      continue;
+    }
+
+    if (input === '/knowledge') {
+      const files = listKnowledgeFiles();
+      for (const f of files) {
+        const icon = f.type === 'always' ? '🔵' : f.type === 'on-demand' ? '🟡' : '🟢';
+        printLine(`  ${icon} ${f.file} (${f.type})`);
+      }
       rl.prompt();
       continue;
     }
 
     if (input === '/help') {
       printLine(chalk.cyan('内置命令:'));
-      printLine('  /clear   — 清空对话历史');
-      printLine('  /history — 查看对话轮数');
-      printLine('  /quit    — 退出');
-      printLine('  /help    — 显示帮助');
+      printLine('  /clear     — 清空对话历史');
+      printLine('  /compact   — 压缩上下文（保留最近对话）');
+      printLine('  /history   — 查看对话轮数');
+      printLine('  /status    — 查看会话状态');
+      printLine('  /knowledge — 查看加载的知识库');
+      printLine('  /quit      — 退出');
+      printLine('  /help      — 显示帮助');
       rl.prompt();
       continue;
     }

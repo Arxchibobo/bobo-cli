@@ -5,6 +5,7 @@ import type {
 } from 'openai/resources/index.js';
 import { loadConfig } from './config.js';
 import { loadKnowledge } from './knowledge.js';
+import { loadMemory } from './memory.js';
 import { toolDefinitions, executeTool } from './tools/index.js';
 import { printStreaming, printToolCall, printToolResult, printError, printLine } from './ui.js';
 
@@ -29,7 +30,14 @@ export async function runAgent(
     baseURL: config.baseUrl,
   });
 
-  const systemPrompt = loadKnowledge();
+  // Load knowledge with context-aware on-demand loading
+  const memory = loadMemory();
+  const extraContext = memory ? `# 你的记忆\n\n${memory}` : undefined;
+  const systemPrompt = loadKnowledge({
+    userMessage,
+    loadAll: history.length === 0,
+    extraContext,
+  });
 
   const messages: ChatCompletionMessageParam[] = [
     { role: 'system', content: systemPrompt },
@@ -38,7 +46,7 @@ export async function runAgent(
   ];
 
   let fullResponse = '';
-  const maxIterations = 20; // safety limit for tool calling loops
+  const maxIterations = 20;
 
   for (let i = 0; i < maxIterations; i++) {
     if (options.signal?.aborted) {
@@ -65,14 +73,12 @@ export async function runAgent(
         const delta = chunk.choices[0]?.delta;
         if (!delta) continue;
 
-        // Handle text content
         if (delta.content) {
           assistantContent += delta.content;
           fullResponse += delta.content;
           printStreaming(delta.content);
         }
 
-        // Handle tool calls
         if (delta.tool_calls) {
           for (const tc of delta.tool_calls) {
             const idx = tc.index;
@@ -87,8 +93,10 @@ export async function runAgent(
         }
       }
 
-      // Build assistant message
-      const assistantMsg: ChatCompletionAssistantMessageParam = { role: 'assistant', content: assistantContent || null };
+      const assistantMsg: ChatCompletionAssistantMessageParam = {
+        role: 'assistant',
+        content: assistantContent || null,
+      };
 
       if (toolCalls.size > 0) {
         assistantMsg.tool_calls = Array.from(toolCalls.values()).map(tc => ({
@@ -100,14 +108,12 @@ export async function runAgent(
 
       messages.push(assistantMsg);
 
-      // If no tool calls, we're done
       if (toolCalls.size === 0) {
-        if (assistantContent) printLine(); // newline after streaming
+        if (assistantContent) printLine();
         break;
       }
 
-      // Execute tool calls
-      if (assistantContent) printLine(); // newline before tool output
+      if (assistantContent) printLine();
 
       for (const tc of toolCalls.values()) {
         let args: Record<string, unknown> = {};
@@ -127,9 +133,6 @@ export async function runAgent(
           content: result,
         });
       }
-
-      // Continue the loop to let the model process tool results
-
     } catch (e) {
       if ((e as Error).message === 'Aborted') throw e;
       printError(`API Error: ${(e as Error).message}`);
@@ -137,11 +140,10 @@ export async function runAgent(
     }
   }
 
-  // Update history (without system message)
   const newHistory: ChatCompletionMessageParam[] = [
     ...history,
     { role: 'user', content: userMessage },
-    ...messages.slice(history.length + 2), // skip system + old history + new user msg
+    ...messages.slice(history.length + 2),
   ];
 
   return { response: fullResponse, history: newHistory };

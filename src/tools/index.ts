@@ -1,7 +1,8 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
-import { resolve, dirname, join } from 'node:path';
+import { resolve, dirname } from 'node:path';
 import { execSync } from 'node:child_process';
 import { glob } from 'glob';
+import { saveMemory, searchMemory } from '../memory.js';
 import type { ChatCompletionTool } from 'openai/resources/index.js';
 
 // ─── Tool Definitions (OpenAI format) ────────────────────────
@@ -100,6 +101,71 @@ export const toolDefinitions: ChatCompletionTool[] = [
       },
     },
   },
+  // ─── Memory Tools ──────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'save_memory',
+      description: 'Save important information to persistent memory. Categories: user (preferences), feedback (corrections), project (active tasks), reference (knowledge), experience (lessons learned).',
+      parameters: {
+        type: 'object',
+        properties: {
+          category: {
+            type: 'string',
+            enum: ['user', 'feedback', 'project', 'reference', 'experience'],
+            description: 'Memory category',
+          },
+          content: { type: 'string', description: 'What to remember' },
+        },
+        required: ['category', 'content'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_memory',
+      description: 'Search persistent memory for relevant past information, preferences, or learnings.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search query' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  // ─── Git Tools ─────────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'git_status',
+      description: 'Get git status of the current repository.',
+      parameters: {
+        type: 'object',
+        properties: {
+          cwd: { type: 'string', description: 'Repository path (default: CWD)' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'git_diff',
+      description: 'Show git diff (staged, unstaged, or between refs).',
+      parameters: {
+        type: 'object',
+        properties: {
+          ref: { type: 'string', description: 'Git ref to diff against (e.g. HEAD~1, main)' },
+          staged: { type: 'boolean', description: 'Show staged changes only' },
+          cwd: { type: 'string', description: 'Repository path (default: CWD)' },
+        },
+        required: [],
+      },
+    },
+  },
 ];
 
 // ─── Tool Execution ──────────────────────────────────────────
@@ -112,7 +178,11 @@ export function executeTool(name: string, args: Record<string, unknown>): string
       case 'edit_file': return editFile(args);
       case 'search_files': return searchFiles(args);
       case 'list_directory': return listDirectory(args);
-      case 'shell': return shell(args);
+      case 'shell': return shellExec(args);
+      case 'save_memory': return saveMemoryTool(args);
+      case 'search_memory': return searchMemoryTool(args);
+      case 'git_status': return gitStatus(args);
+      case 'git_diff': return gitDiff(args);
       default: return `Error: Unknown tool "${name}"`;
     }
   } catch (e) {
@@ -201,7 +271,7 @@ function listDirectory(args: Record<string, unknown>): string {
   }
 }
 
-function shell(args: Record<string, unknown>): string {
+function shellExec(args: Record<string, unknown>): string {
   const command = args.command as string;
   const cwd = args.cwd ? resolvePath(args.cwd as string) : process.cwd();
   const timeout = ((args.timeout as number) || 30) * 1000;
@@ -216,10 +286,59 @@ function shell(args: Record<string, unknown>): string {
     });
     return result.trim() || '(no output)';
   } catch (e: unknown) {
-    const err = e as { stdout?: string; stderr?: string; status?: number; message?: string };
+    const err = e as { stdout?: string; stderr?: string; status?: number };
     const stdout = err.stdout || '';
     const stderr = err.stderr || '';
     const code = err.status ?? 1;
     return `Exit code: ${code}\n${stdout}\n${stderr}`.trim();
+  }
+}
+
+// ─── Memory Tool Implementations ─────────────────────────────
+
+function saveMemoryTool(args: Record<string, unknown>): string {
+  const now = new Date();
+  const timestamp = now.toISOString().split('T')[0] + ' ' + now.toTimeString().split(' ')[0];
+  return saveMemory({
+    category: args.category as MemoryEntry['category'],
+    content: args.content as string,
+    timestamp,
+  });
+}
+
+type MemoryEntry = { category: 'user' | 'feedback' | 'project' | 'reference' | 'experience'; content: string; timestamp: string };
+
+function searchMemoryTool(args: Record<string, unknown>): string {
+  return searchMemory(args.query as string);
+}
+
+// ─── Git Tool Implementations ────────────────────────────────
+
+function gitStatus(args: Record<string, unknown>): string {
+  const cwd = args.cwd ? resolvePath(args.cwd as string) : process.cwd();
+  try {
+    const status = execSync('git status --short', { cwd, encoding: 'utf-8', timeout: 5000 });
+    const branch = execSync('git branch --show-current', { cwd, encoding: 'utf-8', timeout: 5000 }).trim();
+    return `Branch: ${branch}\n${status.trim() || '(clean)'}`;
+  } catch (e) {
+    return `Not a git repo or git error: ${(e as Error).message}`;
+  }
+}
+
+function gitDiff(args: Record<string, unknown>): string {
+  const cwd = args.cwd ? resolvePath(args.cwd as string) : process.cwd();
+  const ref = args.ref as string | undefined;
+  const staged = args.staged as boolean | undefined;
+
+  let cmd = 'git diff';
+  if (staged) cmd += ' --staged';
+  if (ref) cmd += ` ${ref}`;
+  cmd += ' --stat'; // Start with stat for overview
+
+  try {
+    const stat = execSync(cmd, { cwd, encoding: 'utf-8', timeout: 10000 });
+    return stat.trim() || '(no changes)';
+  } catch (e) {
+    return `Git diff error: ${(e as Error).message}`;
   }
 }
