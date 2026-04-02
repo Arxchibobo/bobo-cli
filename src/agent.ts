@@ -13,6 +13,7 @@ import { loadSkillPrompts } from './skills.js';
 import { loadProjectKnowledge } from './project.js';
 import { toolDefinitions, executeTool } from './tools/index.js';
 import { isAdvancedTool, executeAdvancedTool } from './tools/advanced.js';
+import { isBrowserTool, executeBrowserTool } from './tools/browser.js';
 import { getMcpToolDefinitions, executeMcpTool, isMcpTool } from './mcp-client.js';
 import { printStreaming, printToolCall, printToolResult, printError, printLine } from './ui.js';
 import { Spinner } from './spinner.js';
@@ -292,12 +293,14 @@ export async function runAgent(
           printToolCall(tc.name, tc.arguments);
         }
 
-        // Route to MCP, advanced, or built-in tool
+        // Route to MCP, advanced, browser, or built-in tool
         let result: string;
         if (isMcpTool(tc.name)) {
           result = await executeMcpTool(tc.name, args);
         } else if (isAdvancedTool(tc.name)) {
           result = await executeAdvancedTool(tc.name, args);
+        } else if (isBrowserTool(tc.name)) {
+          result = await executeBrowserTool(tc.name, args);
         } else {
           result = executeTool(tc.name, args);
         }

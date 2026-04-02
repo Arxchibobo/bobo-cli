@@ -26,6 +26,7 @@ const COMMANDS: CommandDef[] = [
   { name: '/skills', description: 'List skills' },
   { name: '/dream', description: 'Memory consolidation' },
   { name: '/mcp', description: 'MCP server status' },
+  { name: '/bg', description: 'Background processes' },
   { name: '/rename', description: 'Rename current session' },
   { name: '/quit', description: 'Exit' },
   { name: '/exit', description: 'Exit' },

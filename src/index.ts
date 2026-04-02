@@ -39,6 +39,8 @@ import { runHooks, initHooksTemplate } from './hooks.js';
 import { initMcpServers, shutdownMcpServers, getMcpStatus } from './mcp-client.js';
 import { startWatch } from './watcher.js';
 import { runAutonomous } from './autonomous.js';
+import { killAllProcesses } from './tools/process-manager.js';
+import { getCompactStatus, compressHistory } from './compactor.js';
 import chalk from 'chalk';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -762,6 +764,7 @@ async function runRepl(opts: ReplOptions): Promise<void> {
     autoSave();
     runHooks('session-end');
     shutdownMcpServers();
+    killAllProcesses();
     disableStatusBar();
     printLine(chalk.dim('\nGoodbye! 🐕'));
     process.exit(0);
@@ -782,6 +785,7 @@ async function runRepl(opts: ReplOptions): Promise<void> {
       autoSave();
       runHooks('session-end');
       shutdownMcpServers();
+      killAllProcesses();
       disableStatusBar();
       printLine(chalk.dim('Goodbye! 🐕'));
       process.exit(0);
@@ -1082,12 +1086,14 @@ async function runRepl(opts: ReplOptions): Promise<void> {
     if (input === '/status') {
       const turns = history.filter(m => m.role === 'user').length;
       const mcpServers = getMcpStatus();
+      const compactInfo = getCompactStatus(history);
       printLine(chalk.cyan('📊 Session Status:'));
       printLine(`  Model:      ${currentModel}`);
       printLine(`  Effort:     ${currentEffort}`);
       printLine(`  Permission: ${currentPermissionMode}`);
       printLine(`  Turns:      ${turns}`);
       printLine(`  Messages:   ${history.length}`);
+      printLine(`  Tokens:     ~${compactInfo.tokens.toLocaleString()} (${compactInfo.urgency})`);
       printLine(`  CWD:        ${process.cwd()}`);
       if (sessionName) printLine(`  Name:       ${sessionName}`);
       if (mcpServers.length > 0) {
@@ -1141,6 +1147,14 @@ async function runRepl(opts: ReplOptions): Promise<void> {
       continue;
     }
 
+    // ─── /bg (background processes) ───
+    if (input === '/bg') {
+      const { executeProcessTool } = await import('./tools/process-manager.js');
+      printLine(executeProcessTool('bg_list', {}));
+      showPrompt();
+      continue;
+    }
+
     // ─── /help ───
     if (input === '/help') {
       printLine(chalk.cyan.bold('Commands:'));
@@ -1173,6 +1187,7 @@ async function runRepl(opts: ReplOptions): Promise<void> {
       printLine('  /knowledge   List knowledge files');
       printLine('  /skills      List skills');
       printLine('  /mcp         MCP server status');
+      printLine('  /bg          Background process list');
       printLine('  /dream       Memory consolidation');
       printLine('');
       printLine(chalk.dim('  CLI Commands'));
@@ -1207,6 +1222,16 @@ async function runRepl(opts: ReplOptions): Promise<void> {
       });
       history = result.history;
       lastResponse = result.response;
+
+      // Auto-compact check
+      const compactInfo = getCompactStatus(history);
+      if (compactInfo.urgency === 'critical') {
+        printWarning(`Context at ${compactInfo.tokens} tokens — auto-compressing...`);
+        history = compressHistory(history, 8);
+        printSuccess(`Compressed to ${getCompactStatus(history).tokens} tokens`);
+      } else if (compactInfo.urgency === 'high') {
+        printWarning(`⚠ Context at ${compactInfo.tokens} tokens. Run /compact to compress.`);
+      }
     } catch (e) {
       if ((e as Error).message !== 'Aborted') {
         printError((e as Error).message);
