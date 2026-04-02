@@ -33,7 +33,7 @@ import { registerStructuredTemplateCommand } from './structured-template-command
 import { saveSession, listSessions, loadSession, getRecentSession } from './sessions.js';
 import { generateInsight } from './insight.js';
 import { spawnSubAgent, listSubAgents, getSubAgent } from './sub-agents.js';
-import { enableStatusBar, disableStatusBar, updateStatusBar, setupResizeHandler } from './statusbar.js';
+import { enableStatusBar, disableStatusBar, updateStatusBar, setupResizeHandler, renderStatusBar } from './statusbar.js';
 import { slashCompleter } from './completer.js';
 import chalk from 'chalk';
 
@@ -601,6 +601,13 @@ async function runRepl(opts: ReplOptions): Promise<void> {
   let lastResponse = '';
   let autoCompactTriggered = false;
 
+  // Wrapper that renders status bar before prompt
+  const showPrompt = () => {
+    const bar = renderStatusBar();
+    if (bar) printLine(bar);
+    showPrompt();
+  };
+
   const autoSave = () => {
     if (history.length > 0) {
       const id = saveSession(history, process.cwd());
@@ -613,10 +620,10 @@ async function runRepl(opts: ReplOptions): Promise<void> {
       abortController.abort();
       abortController = null;
       printLine(chalk.dim('\n(cancelled)'));
-      rl.prompt();
+      showPrompt();
     } else {
       printLine(chalk.dim('\n(press Ctrl+C again or Ctrl+D to exit)'));
-      rl.prompt();
+      showPrompt();
     }
   });
 
@@ -627,13 +634,13 @@ async function runRepl(opts: ReplOptions): Promise<void> {
     process.exit(0);
   });
 
-  rl.prompt();
+  showPrompt();
 
   for await (const line of rl) {
     const input = line.trim();
 
     if (!input) {
-      rl.prompt();
+      showPrompt();
       continue;
     }
 
@@ -653,7 +660,7 @@ async function runRepl(opts: ReplOptions): Promise<void> {
       autoCompactTriggered = false;
       resetPlan();
       printSuccess('Conversation cleared');
-      rl.prompt();
+      showPrompt();
       continue;
     }
 
@@ -669,7 +676,7 @@ async function runRepl(opts: ReplOptions): Promise<void> {
         updateStatusBar({ model: currentModel });
         printSuccess(`Model switched to: ${currentModel}`);
       }
-      rl.prompt();
+      showPrompt();
       continue;
     }
 
@@ -688,7 +695,7 @@ async function runRepl(opts: ReplOptions): Promise<void> {
       } else {
         printError('Invalid effort level. Use: low, medium, high');
       }
-      rl.prompt();
+      showPrompt();
       continue;
     }
 
@@ -722,7 +729,7 @@ async function runRepl(opts: ReplOptions): Promise<void> {
           printWarning(`Clipboard unavailable. Saved to ${copyPath}`);
         }
       }
-      rl.prompt();
+      showPrompt();
       continue;
     }
 
@@ -763,7 +770,7 @@ async function runRepl(opts: ReplOptions): Promise<void> {
         printLine(chalk.green('\n  🟢 Context usage healthy.'));
       }
       printLine();
-      rl.prompt();
+      showPrompt();
       continue;
     }
 
@@ -777,13 +784,13 @@ async function runRepl(opts: ReplOptions): Promise<void> {
         sessionName = name;
         printSuccess(`Session renamed: ${sessionName}`);
       }
-      rl.prompt();
+      showPrompt();
       continue;
     }
 
     if (input === '/history') {
       printLine(`Turns: ${history.filter(m => m.role === 'user').length}`);
-      rl.prompt();
+      showPrompt();
       continue;
     }
 
@@ -792,7 +799,7 @@ async function runRepl(opts: ReplOptions): Promise<void> {
       const sessions = listSessions(10);
       if (sessions.length === 0) {
         printWarning('No saved sessions.');
-        rl.prompt();
+        showPrompt();
         continue;
       }
       printLine(chalk.cyan.bold('\n💾 Recent Sessions:\n'));
@@ -821,14 +828,14 @@ async function runRepl(opts: ReplOptions): Promise<void> {
           printError('Failed to load session.');
         }
       }
-      rl.prompt();
+      showPrompt();
       continue;
     }
 
     // ─── /insight ───
     if (input === '/insight') {
       printLine(generateInsight(history, sessionStartTime, [...new Set(matchedSkills)]));
-      rl.prompt();
+      showPrompt();
       continue;
     }
 
@@ -846,7 +853,7 @@ async function runRepl(opts: ReplOptions): Promise<void> {
         }
       }
       printLine();
-      rl.prompt();
+      showPrompt();
       continue;
     }
 
@@ -862,7 +869,7 @@ async function runRepl(opts: ReplOptions): Promise<void> {
         if (agent.error) printLine(chalk.red(`Error: ${agent.error}`));
       }
       printLine();
-      rl.prompt();
+      showPrompt();
       continue;
     }
 
@@ -878,7 +885,7 @@ async function runRepl(opts: ReplOptions): Promise<void> {
           printSuccess(`Sub-agent ${result.id} spawned! Check with /agents`);
         }
       }
-      rl.prompt();
+      showPrompt();
       continue;
     }
 
@@ -913,7 +920,7 @@ async function runRepl(opts: ReplOptions): Promise<void> {
       } else {
         printWarning('Conversation too short to compact');
       }
-      rl.prompt();
+      showPrompt();
       continue;
     }
 
@@ -932,7 +939,7 @@ async function runRepl(opts: ReplOptions): Promise<void> {
       }
       abortController = null;
       printLine();
-      rl.prompt();
+      showPrompt();
       continue;
     }
 
@@ -947,13 +954,13 @@ async function runRepl(opts: ReplOptions): Promise<void> {
       printLine(`  Messages:   ${history.length}`);
       printLine(`  CWD:        ${process.cwd()}`);
       if (sessionName) printLine(`  Name:       ${sessionName}`);
-      rl.prompt();
+      showPrompt();
       continue;
     }
 
     if (input === '/plan') {
       printLine(getCurrentPlan());
-      rl.prompt();
+      showPrompt();
       continue;
     }
 
@@ -963,7 +970,7 @@ async function runRepl(opts: ReplOptions): Promise<void> {
         const icon = f.type === 'always' ? '🔵' : f.type === 'on-demand' ? '🟡' : '🟢';
         printLine(`  ${icon} ${f.file} (${f.type})`);
       }
-      rl.prompt();
+      showPrompt();
       continue;
     }
 
@@ -973,7 +980,7 @@ async function runRepl(opts: ReplOptions): Promise<void> {
         const icon = s.enabled ? '✅' : '❌';
         printLine(`  ${icon} ${s.name} — ${s.description}`);
       }
-      rl.prompt();
+      showPrompt();
       continue;
     }
 
@@ -1016,7 +1023,7 @@ async function runRepl(opts: ReplOptions): Promise<void> {
       printLine('  bobo -r <id> Resume specific session');
       printLine('  bobo --full-auto  Auto-approve tool calls');
       printLine('  bobo --yolo  No sandbox, no approvals');
-      rl.prompt();
+      showPrompt();
       continue;
     }
 
@@ -1046,7 +1053,7 @@ async function runRepl(opts: ReplOptions): Promise<void> {
     abortController = null;
 
     printLine();
-    rl.prompt();
+    showPrompt();
   }
 }
 

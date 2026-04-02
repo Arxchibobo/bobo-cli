@@ -32,6 +32,8 @@ const COMMANDS: CommandDef[] = [
 
 /**
  * Readline completer function.
+ * Shows matching commands when user types / and presses Tab.
+ * Also shows description next to each match.
  */
 export function slashCompleter(line: string): [string[], string] {
   if (!line.startsWith('/')) {
@@ -40,10 +42,22 @@ export function slashCompleter(line: string): [string[], string] {
 
   const input = line.toLowerCase();
   const matches = COMMANDS
-    .filter(c => c.name.startsWith(input))
-    .map(c => c.name);
+    .filter(c => c.name.startsWith(input));
 
-  return [matches, line];
+  if (matches.length === 1) {
+    // Exact single match — complete it
+    return [[matches[0].name], line];
+  }
+
+  if (matches.length > 1) {
+    // Show commands with descriptions
+    const display = matches.map(c => `${c.name.padEnd(16)} ${c.description}`);
+    // Print hints, but return just the names for completion
+    console.log('\n' + display.join('\n'));
+    return [matches.map(c => c.name), line];
+  }
+
+  return [[], line];
 }
 
 /**
