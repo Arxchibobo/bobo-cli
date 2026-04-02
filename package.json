@@ -1,6 +1,6 @@
 {
   "name": "bobo-ai-cli",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Portable AI engineering assistant CLI with embedded knowledge, skills, and memory",
   "type": "module",
   "main": "dist/index.js",
@@ -10,6 +10,7 @@
   "files": [
     "dist/",
     "knowledge/",
+    "bundled-skills/",
     "README.md",
     "LICENSE"
   ],

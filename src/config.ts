@@ -34,7 +34,16 @@ export function loadConfig(): Config {
   }
   try {
     const raw = readFileSync(CONFIG_PATH, 'utf-8');
-    return { ...DEFAULT_CONFIG, ...JSON.parse(raw) };
+    const config = { ...DEFAULT_CONFIG, ...JSON.parse(raw) };
+    // Auto-fix baseUrl: OpenAI SDK needs /v1 suffix for compatible providers
+    if (config.baseUrl && !config.baseUrl.endsWith('/v1') && !config.baseUrl.endsWith('/v1/')) {
+      const knownNeedsV1 = !config.baseUrl.includes('api.anthropic.com') &&
+                           !config.baseUrl.includes('api.openai.com');
+      if (knownNeedsV1) {
+        config.baseUrl = config.baseUrl.replace(/\/+$/, '') + '/v1';
+      }
+    }
+    return config;
   } catch {
     return { ...DEFAULT_CONFIG };
   }

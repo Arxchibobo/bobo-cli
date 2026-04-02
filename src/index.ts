@@ -27,7 +27,7 @@ import { registerRulesCommand } from './rules-commands.js';
 import { registerStructuredSkillsCommand } from './structured-skills-commands.js';
 import { registerStructuredTemplateCommand } from './structured-template-commands.js';
 import chalk from 'chalk';
-import { existsSync, mkdirSync, copyFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, copyFileSync, readdirSync, statSync, cpSync } from 'node:fs';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 let version = '0.1.0';
@@ -128,6 +128,31 @@ program
     }
 
     initSkills();
+
+    // Copy bundled skills to ~/.bobo/skills/
+    const bundledSkillsDir = join(__dirname, '..', 'bundled-skills');
+    const userSkillsDir = join(getConfigDir(), 'skills');
+    if (existsSync(bundledSkillsDir)) {
+      if (!existsSync(userSkillsDir)) {
+        mkdirSync(userSkillsDir, { recursive: true });
+      }
+      let installed = 0;
+      for (const skillName of readdirSync(bundledSkillsDir)) {
+        const src = join(bundledSkillsDir, skillName);
+        const dest = join(userSkillsDir, skillName);
+        try {
+          if (!statSync(src).isDirectory()) continue;
+        } catch { continue; }
+        if (!existsSync(dest)) {
+          cpSync(src, dest, { recursive: true });
+          installed++;
+          printSuccess(`Installed skill: ${skillName}`);
+        }
+      }
+      if (installed > 0) {
+        printSuccess(`${installed} bundled skills installed`);
+      }
+    }
 
     printSuccess(`Initialized ${getConfigDir()}`);
     printLine(`Knowledge: ${knowledgeDir}`);
