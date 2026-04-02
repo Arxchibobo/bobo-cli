@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import chalk from 'chalk';
 import type {
   ChatCompletionMessageParam,
   ChatCompletionAssistantMessageParam,
@@ -76,41 +77,72 @@ export async function runAgent(
     }
 
     try {
-      const stream = await client.chat.completions.create({
-        model: config.model,
-        messages,
-        tools: toolDefinitions,
-        max_tokens: config.maxTokens,
-        stream: true,
-      });
-
       let assistantContent = '';
       const toolCalls: Map<number, { id: string; name: string; arguments: string }> = new Map();
 
-      for await (const chunk of stream) {
-        if (options.signal?.aborted) {
-          throw new Error('Aborted');
-        }
+      try {
+        // Try streaming first
+        const stream = await client.chat.completions.create({
+          model: config.model,
+          messages,
+          tools: toolDefinitions,
+          max_tokens: config.maxTokens,
+          stream: true,
+        });
 
-        const delta = chunk.choices[0]?.delta;
-        if (!delta) continue;
+        for await (const chunk of stream) {
+          if (options.signal?.aborted) {
+            throw new Error('Aborted');
+          }
 
-        if (delta.content) {
-          assistantContent += delta.content;
-          fullResponse += delta.content;
-          printStreaming(delta.content);
-        }
+          const delta = chunk.choices[0]?.delta;
+          if (!delta) continue;
 
-        if (delta.tool_calls) {
-          for (const tc of delta.tool_calls) {
-            const idx = tc.index;
-            if (!toolCalls.has(idx)) {
-              toolCalls.set(idx, { id: tc.id || '', name: tc.function?.name || '', arguments: '' });
+          if (delta.content) {
+            assistantContent += delta.content;
+            fullResponse += delta.content;
+            printStreaming(delta.content);
+          }
+
+          if (delta.tool_calls) {
+            for (const tc of delta.tool_calls) {
+              const idx = tc.index;
+              if (!toolCalls.has(idx)) {
+                toolCalls.set(idx, { id: tc.id || '', name: tc.function?.name || '', arguments: '' });
+              }
+              const existing = toolCalls.get(idx)!;
+              if (tc.id) existing.id = tc.id;
+              if (tc.function?.name) existing.name = tc.function.name;
+              if (tc.function?.arguments) existing.arguments += tc.function.arguments;
             }
-            const existing = toolCalls.get(idx)!;
-            if (tc.id) existing.id = tc.id;
-            if (tc.function?.name) existing.name = tc.function.name;
-            if (tc.function?.arguments) existing.arguments += tc.function.arguments;
+          }
+        }
+      } catch (streamErr) {
+        if ((streamErr as Error).message === 'Aborted') throw streamErr;
+        // Fallback to non-streaming mode
+        printLine(chalk.dim('(falling back to non-streaming mode...)'));
+        const completion = await client.chat.completions.create({
+          model: config.model,
+          messages,
+          tools: toolDefinitions,
+          max_tokens: config.maxTokens,
+          stream: false,
+        });
+
+        const choice = completion.choices[0];
+        if (choice?.message?.content) {
+          assistantContent = choice.message.content;
+          fullResponse += assistantContent;
+          printStreaming(assistantContent);
+        }
+        if (choice?.message?.tool_calls) {
+          for (let idx = 0; idx < choice.message.tool_calls.length; idx++) {
+            const tc = choice.message.tool_calls[idx];
+            toolCalls.set(idx, {
+              id: tc.id,
+              name: tc.function.name,
+              arguments: tc.function.arguments,
+            });
           }
         }
       }
