@@ -106,12 +106,17 @@ export function clearHookCache(): void {
  */
 export function initHooksTemplate(): string {
   return JSON.stringify({
+    'pre-edit': [],
     'post-edit': [],
+    'pre-shell': [],
+    'post-shell': [],
     'pre-commit': [],
     'post-commit': [],
     'session-end': [],
     '_examples': {
+      'pre-edit': ['echo "Editing: $BOBO_FILE"'],
       'post-edit': ['prettier --write $BOBO_FILE'],
+      'pre-shell': ['echo "Running: $BOBO_COMMAND"'],
       'pre-commit': ['npm run lint'],
       'post-commit': ['echo "Committed: $BOBO_COMMIT_MSG"'],
     },
