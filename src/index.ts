@@ -605,7 +605,7 @@ async function runRepl(opts: ReplOptions): Promise<void> {
   const showPrompt = () => {
     const bar = renderStatusBar();
     if (bar) printLine(bar);
-    showPrompt();
+    rl.prompt();
   };
 
   const autoSave = () => {
