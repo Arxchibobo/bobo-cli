@@ -174,23 +174,30 @@ export function setSkillEnabled(name: string, enabled: boolean): string {
 }
 
 /**
- * Load enabled skill prompts for system prompt injection
+ * Load skill prompts for system prompt injection.
+ * Built-in skills are always loaded.
+ * Custom skills use passive triggering: only injected when the user message
+ * matches the skill name or description keywords.
+ * Pass userMessage to enable passive triggering; omit to load all enabled.
  */
-export function loadSkillPrompts(): string {
+export function loadSkillPrompts(userMessage?: string): string {
   const manifest = loadManifest();
   const parts: string[] = [];
 
-  // Built-in skills
+  // Built-in skills — always loaded
   for (const [name, info] of Object.entries(BUILTIN_SKILLS)) {
     if (manifest.skills[name]?.enabled !== false) {
       parts.push(info.prompt);
     }
   }
 
-  // Custom skills (follow symlinks)
+  // Custom skills — passive triggering
   const skillsDir = getSkillsDir();
   if (existsSync(skillsDir)) {
     const entries = readdirSync(skillsDir);
+    const query = userMessage?.toLowerCase() || '';
+    const loadAll = !userMessage;
+
     for (const entry of entries) {
       const fullPath = join(skillsDir, entry);
       try {
@@ -198,13 +205,35 @@ export function loadSkillPrompts(): string {
       } catch { continue; }
       if (manifest.skills[entry]?.enabled === false) continue;
       const skillFile = join(fullPath, 'SKILL.md');
-      if (existsSync(skillFile)) {
+      if (!existsSync(skillFile)) continue;
+
+      if (loadAll) {
+        // No message context — load all enabled (e.g. for /compact, /dream)
         parts.push(readFileSync(skillFile, 'utf-8').trim());
+        continue;
+      }
+
+      // Passive trigger: match skill name or key terms against user message
+      const nameWords = entry.replace(/[-_]/g, ' ').toLowerCase();
+      if (query.includes(nameWords) || nameWords.split(' ').some(w => w.length > 3 && query.includes(w))) {
+        parts.push(readFileSync(skillFile, 'utf-8').trim());
+        continue;
+      }
+
+      // Also check first line / description in SKILL.md for keyword match
+      const content = readFileSync(skillFile, 'utf-8');
+      const descMatch = content.match(/^description:\s*(.+)/m);
+      if (descMatch) {
+        const descWords = descMatch[1].toLowerCase().split(/\W+/).filter(w => w.length > 3);
+        if (descWords.some(w => query.includes(w))) {
+          parts.push(content.trim());
+        }
       }
     }
   }
 
-  return parts.length > 0 ? '\n\n---\n\n# Active Skills\n\n' + parts.join('\n\n---\n\n') : '';
+  if (parts.length === 0) return '';
+  return '\n\n---\n\n# Active Skills\n\n' + parts.join('\n\n---\n\n');
 }
 
 /**

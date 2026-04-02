@@ -37,7 +37,8 @@ export async function runAgent(
   const extraParts: string[] = [];
 
   // Layer 1: Active skills (behavior rules — highest priority after knowledge)
-  const skillPrompts = loadSkillPrompts();
+  // Passive triggering: only load skills relevant to the user's message
+  const skillPrompts = loadSkillPrompts(userMessage);
   if (skillPrompts) extraParts.push(skillPrompts);
 
   // Layer 2: Persistent memory (data — lower priority than rules)

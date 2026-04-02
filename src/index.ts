@@ -131,10 +131,6 @@ program
     // Copy bundled skills to ~/.bobo/skills/
     const bundledSkillsDir = join(__dirname, '..', 'bundled-skills');
     const userSkillsDir = join(getConfigDir(), 'skills');
-    const coreSkills = new Set([
-      'adversarial-verification', 'context-budget-analyzer', 'context-compressor',
-      'deep-research', 'high-agency', 'memory-manager', 'proactive-self-improving',
-    ]);
     if (existsSync(bundledSkillsDir)) {
       if (!existsSync(userSkillsDir)) {
         mkdirSync(userSkillsDir, { recursive: true });
@@ -152,7 +148,7 @@ program
         }
       }
       if (installed > 0) {
-        // Set core skills enabled, others disabled by default
+        // All skills enabled by default — passive triggering based on context
         const manifestPath = join(getConfigDir(), 'skills-manifest.json');
         let manifest: Record<string, unknown> = {};
         try {
@@ -161,12 +157,12 @@ program
         const skills = (manifest.skills || {}) as Record<string, { enabled: boolean }>;
         for (const skillName of readdirSync(userSkillsDir)) {
           if (!skills[skillName]) {
-            skills[skillName] = { enabled: coreSkills.has(skillName) };
+            skills[skillName] = { enabled: true };
           }
         }
         manifest.skills = skills;
         writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
-        printSuccess(`${installed} skills installed (${coreSkills.size} core enabled, ${installed - coreSkills.size} on-demand)`);
+        printSuccess(`${installed} skills installed (all enabled, passive triggering)`);
       }
     }
 
@@ -282,6 +278,7 @@ async function runRepl(): Promise<void> {
     skillsActive: skills.filter(s => s.enabled).length,
     skillsTotal: skills.length,
     knowledgeCount: knowledgeFiles.length,
+    cwd: process.cwd(),
   });
 
   if (!config.apiKey) {

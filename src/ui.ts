@@ -38,8 +38,27 @@ export function printToolResult(result: string): void {
   }
 }
 
+// ASCII art dog logo (pixel art style, like Claude Code's robot)
+const DOG_LOGO = [
+  '    ╱▔▔╲   ╱▔▔╲    ',
+  '   ▏  ●  ▔▔  ●  ▕   ',
+  '   ▏    ▏▔▔▕    ▕   ',
+  '    ╲  ╱    ╲  ╱    ',
+  '     ▔╲  ▽  ╱▔     ',
+  '       ╲▁▁▁╱       ',
+];
+
+const BOBO_BANNER = [
+  ' ██████╗  ██████╗ ██████╗  ██████╗ ',
+  ' ██╔══██╗██╔═══██╗██╔══██╗██╔═══██╗',
+  ' ██████╔╝██║   ██║██████╔╝██║   ██║',
+  ' ██╔══██╗██║   ██║██╔══██╗██║   ██║',
+  ' ██████╔╝╚██████╔╝██████╔╝╚██████╔╝',
+  ' ╚═════╝  ╚═════╝ ╚═════╝  ╚═════╝ ',
+];
+
 /**
- * Claude Code-style boxed welcome screen
+ * Claude Code-style welcome screen with ASCII art logo
  */
 export function printWelcome(info: {
   version: string;
@@ -48,32 +67,38 @@ export function printWelcome(info: {
   skillsActive: number;
   skillsTotal: number;
   knowledgeCount: number;
+  cwd: string;
 }): void {
-  const width = 48;
-  const pad = (s: string, w: number) => s + ' '.repeat(Math.max(0, w - stripAnsi(s).length));
-  const line = (content: string) => {
-    const stripped = stripAnsi(content);
-    const padding = Math.max(0, width - 4 - stripped.length);
-    return `${chalk.cyan('│')}  ${content}${' '.repeat(padding)}${chalk.cyan('│')}`;
-  };
-  const empty = `${chalk.cyan('│')}${' '.repeat(width - 2)}${chalk.cyan('│')}`;
-
-  const title = `${chalk.bold.white('🐕 Bobo CLI')}`;
-  const ver = chalk.dim(`v${info.version}`);
-  const titleLine = `${title}${' '.repeat(Math.max(1, width - 4 - stripAnsi(title).length - stripAnsi(ver).length))}${ver}`;
-
   console.log();
-  console.log(`${chalk.cyan('╭')}${'─'.repeat(width - 2)}${chalk.cyan('╮')}`);
-  console.log(`${chalk.cyan('│')}  ${titleLine}  ${chalk.cyan('│')}`);
-  console.log(line(chalk.dim('Portable AI Engineering Assistant')));
-  console.log(empty);
-  console.log(line(`Model:     ${chalk.white(info.model)}`));
-  console.log(line(`Tools:     ${chalk.white(String(info.toolCount))} available`));
-  console.log(line(`Skills:    ${chalk.green(String(info.skillsActive))} active ${chalk.dim('/')} ${info.skillsTotal} total`));
-  console.log(line(`Knowledge: ${chalk.white(String(info.knowledgeCount))} files loaded`));
-  console.log(empty);
-  console.log(line(chalk.dim('Type /help for commands, Ctrl+D to exit')));
-  console.log(`${chalk.cyan('╰')}${'─'.repeat(width - 2)}${chalk.cyan('╯')}`);
+
+  // Dog logo in yellow/orange (like Claude's red robot)
+  for (const line of DOG_LOGO) {
+    console.log(chalk.yellow(`    ${line}`));
+  }
+  console.log();
+
+  // Big banner text
+  for (const line of BOBO_BANNER) {
+    console.log(chalk.bold.cyan(line));
+  }
+  console.log();
+
+  // Info line (like Claude Code: "Claude Code v2.1.90")
+  console.log(
+    `    ${chalk.bold.white('Bobo CLI')} ${chalk.dim(`v${info.version}`)}`
+  );
+
+  // Stats line (like "Opus 4.6 (1M context) · API Usage Billing")
+  console.log(
+    `    ${chalk.white(info.model)} ${chalk.dim('·')} ${chalk.dim(`${info.toolCount} tools`)} ${chalk.dim('·')} ${chalk.dim(`${info.skillsTotal} skills`)}`
+  );
+
+  // CWD (like Claude shows the working directory)
+  console.log(`    ${chalk.dim(info.cwd)}`);
+  console.log();
+
+  // Separator
+  console.log(chalk.dim('─'.repeat(60)));
   console.log();
 }
 
@@ -81,9 +106,4 @@ function truncate(s: string, maxLen: number): string {
   const oneLine = s.replace(/\n/g, ' ');
   if (oneLine.length <= maxLen) return oneLine;
   return oneLine.slice(0, maxLen - 3) + '...';
-}
-
-// Strip ANSI escape codes for length calculation
-function stripAnsi(s: string): string {
-  return s.replace(/\x1b\[[0-9;]*m/g, '');
 }
