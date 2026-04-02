@@ -2,7 +2,7 @@
 
 import { Command } from 'commander';
 import { createInterface } from 'node:readline';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, copyFileSync, writeFileSync, readdirSync, statSync, cpSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ChatCompletionMessageParam } from 'openai/resources/index.js';
@@ -27,7 +27,6 @@ import { registerRulesCommand } from './rules-commands.js';
 import { registerStructuredSkillsCommand } from './structured-skills-commands.js';
 import { registerStructuredTemplateCommand } from './structured-template-commands.js';
 import chalk from 'chalk';
-import { existsSync, mkdirSync, copyFileSync, readdirSync, statSync, cpSync } from 'node:fs';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 let version = '0.1.0';
@@ -132,6 +131,10 @@ program
     // Copy bundled skills to ~/.bobo/skills/
     const bundledSkillsDir = join(__dirname, '..', 'bundled-skills');
     const userSkillsDir = join(getConfigDir(), 'skills');
+    const coreSkills = new Set([
+      'adversarial-verification', 'context-budget-analyzer', 'context-compressor',
+      'deep-research', 'high-agency', 'memory-manager', 'proactive-self-improving',
+    ]);
     if (existsSync(bundledSkillsDir)) {
       if (!existsSync(userSkillsDir)) {
         mkdirSync(userSkillsDir, { recursive: true });
@@ -146,11 +149,24 @@ program
         if (!existsSync(dest)) {
           cpSync(src, dest, { recursive: true });
           installed++;
-          printSuccess(`Installed skill: ${skillName}`);
         }
       }
       if (installed > 0) {
-        printSuccess(`${installed} bundled skills installed`);
+        // Set core skills enabled, others disabled by default
+        const manifestPath = join(getConfigDir(), 'skills-manifest.json');
+        let manifest: Record<string, unknown> = {};
+        try {
+          manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+        } catch { manifest = { version: 1, skills: {} }; }
+        const skills = (manifest.skills || {}) as Record<string, { enabled: boolean }>;
+        for (const skillName of readdirSync(userSkillsDir)) {
+          if (!skills[skillName]) {
+            skills[skillName] = { enabled: coreSkills.has(skillName) };
+          }
+        }
+        manifest.skills = skills;
+        writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+        printSuccess(`${installed} skills installed (${coreSkills.size} core enabled, ${installed - coreSkills.size} on-demand)`);
       }
     }
 
