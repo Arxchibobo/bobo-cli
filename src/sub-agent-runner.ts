@@ -2,10 +2,14 @@
  * Sub-agent runner — standalone script that runs as a child process.
  * Usage: node dist/sub-agent-runner.js <taskFile>
  * Reads task from JSON file, runs agent loop, writes result back.
+ * Enhanced with role-based tool filtering and prompt injection.
  */
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { runAgent } from './agent.js';
+import { runVerification, formatVerificationResult } from './verification-agent.js';
+import type { AgentRole } from './sub-agents.js';
+import { getRolePromptInjection } from './sub-agents.js';
 
 interface SubAgentTask {
   id: string;
@@ -15,6 +19,7 @@ interface SubAgentTask {
   startedAt: string;
   result?: string;
   error?: string;
+  role?: AgentRole;
 }
 
 async function main(): Promise<void> {
@@ -36,9 +41,22 @@ async function main(): Promise<void> {
   } catch { /* stay in current dir */ }
 
   try {
-    const result = await runAgent(taskData.task, []);
-    taskData.status = 'completed';
-    taskData.result = result.response;
+    const role = taskData.role || 'worker';
+
+    if (role === 'verify') {
+      // Special handling for verification agents
+      const verificationResult = await runVerification(taskData.task, '', { cwd: taskData.cwd });
+      taskData.status = verificationResult.verdict === 'FAIL' ? 'failed' : 'completed';
+      taskData.result = formatVerificationResult(verificationResult);
+    } else {
+      // Inject role-specific prompt
+      const rolePrompt = getRolePromptInjection(role);
+      const enhancedTask = rolePrompt ? `${rolePrompt}\n\n---\n\n${taskData.task}` : taskData.task;
+
+      const result = await runAgent(enhancedTask, [], { quiet: true });
+      taskData.status = 'completed';
+      taskData.result = result.response;
+    }
   } catch (e) {
     taskData.status = 'failed';
     taskData.error = (e as Error).message;

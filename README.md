@@ -34,6 +34,16 @@ bobo "explain this codebase"
 
 ## Features
 
+### ⚡ Claude Code Architecture (v2.1.0)
+Bobo CLI v2.1.0 implements advanced AI agent patterns inspired by Claude Code:
+
+- **🔍 Verification Agent** — 'Try to break it' philosophy with adversarial testing (build/test/lint + boundary probing)
+- **🎭 Role-Based Sub-Agents** — Explore (read-only), Plan (strategy), Worker (execution), Verify (validation)
+- **🗜️ Three-Tier Compression** — Microcompact (tool result clearing) → Auto-compact (87% threshold + circuit breaker) → Full compact (LLM summary)
+- **🛡️ Tool Governance Pipeline** — Input validation → Risk classification → Permission checks → Execution hooks → Telemetry
+- **💾 Cache Boundary Optimization** — STATIC/DYNAMIC prompt separation for provider caching (Anthropic prompt caching compatible)
+- **🌙 KAIROS Dream Mode** — Automated memory consolidation (reads logs → LLM distillation → structured insights)
+
 ### 🧠 Knowledge System
 9 built-in knowledge files that shape the assistant's behavior and engineering methodology:
 
@@ -108,19 +118,45 @@ Bobo automatically detects and loads `AGENTS.md`, `CLAUDE.md`, and `CONVENTIONS.
 ## Architecture
 
 ```
-bobo CLI v1.0.0
+bobo CLI v2.1.0 — Claude Code-inspired Agent Architecture
 │
-├── System Prompt Assembly (priority order)
+├── System Prompt Assembly (STATIC/DYNAMIC separation)
+│   STATIC (cacheable):
 │   ① Knowledge (3 always-load + 6 on-demand)
 │   ② Skills (active skill prompts)
-│   ③ Memory (persistent user/project/feedback data)
-│   ④ Project (.bobo/ config + auto-detected files)
-│   ⑤ Environment (CWD + context decay warnings)
+│   ③ BOBO.md project instructions
+│   ━━━━━━━━ DYNAMIC BOUNDARY ━━━━━━━━
+│   DYNAMIC (session-specific):
+│   ④ Memory (persistent user/project/feedback data)
+│   ⑤ Project context (.bobo/ + auto-detected files)
+│   ⑥ Environment (CWD + turn count + decay warnings)
 │
-├── Agent Loop
+├── Agent Loop (with governance)
 │   ├── Streaming responses with tool calls
-│   ├── Max 20 iterations per turn
-│   └── Context decay detection (10+ turns)
+│   ├── Tool Governance Pipeline:
+│   │   Input validation → Risk classification → PreToolUse Hook →
+│   │   Permission check → Execution → PostToolUse Hook → Telemetry
+│   ├── Three-tier compression:
+│   │   60%: Microcompact (clear old tool results)
+│   │   87%: Auto-compact (with circuit breaker)
+│   │   95%: Full compact (LLM summary)
+│   └── Max 20 iterations per turn
+│
+├── Sub-Agent System (role-based)
+│   ├── explore  — Read-only exploration
+│   ├── plan     — Strategy without execution
+│   ├── worker   — Full tools + anti-recursion
+│   └── verify   — Adversarial validation
+│
+├── Verification Agent
+│   ├── Build/Test/Lint enforcement
+│   ├── Adversarial probing (boundary tests, API calls)
+│   └── Verdict: PASS / FAIL / PARTIAL
+│
+├── KAIROS Dream Mode
+│   ├── Auto-trigger: 50+ entries or 24h since last dream
+│   ├── LLM distillation: Logs → Insights (confidence-scored)
+│   └── Memory consolidation: Dedupe + category organization
 │
 ├── Structured Knowledge (advanced)
 │   ├── knowledge/rules/     — 15+ domain rule files
@@ -134,6 +170,8 @@ bobo CLI v1.0.0
     ├── bobo init            — Initialize ~/.bobo/
     ├── bobo knowledge       — View knowledge base
     ├── bobo skill           — Skill management
+    ├── bobo spawn <task>    — Background sub-agent (with role)
+    ├── bobo agents          — Manage sub-agents
     ├── bobo kb              — Structured knowledge search
     ├── bobo rules           — Browse engineering rules
     ├── bobo skills          — Structured skill browser
@@ -151,7 +189,10 @@ bobo CLI v1.0.0
 | `/skills` | List active skills |
 | `/plan` | Show current task plan |
 | `/compact` | Compress context (nine-section summary) |
-| `/dream` | Memory consolidation |
+| `/dream` | 🌙 KAIROS memory consolidation (LLM-powered insight extraction) |
+| `/verify [task]` | 🔍 Run verification agent with adversarial testing |
+| `/spawn <task>` | Spawn background sub-agent (with role support) |
+| `/agents` | List all sub-agents and their status |
 | `/clear` | Clear conversation history |
 | `/history` | Show turn count |
 | `/quit` | Exit |

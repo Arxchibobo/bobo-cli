@@ -24,6 +24,8 @@ export type HookEvent =
   | 'post-shell'
   | 'pre-commit'
   | 'post-commit'
+  | 'pre-tool-use'   // New: before any tool execution (governance)
+  | 'post-tool-use'  // New: after any tool execution
   | 'session-end';
 
 interface HookConfig {
@@ -112,6 +114,8 @@ export function initHooksTemplate(): string {
     'post-shell': [],
     'pre-commit': [],
     'post-commit': [],
+    'pre-tool-use': [],
+    'post-tool-use': [],
     'session-end': [],
     '_examples': {
       'pre-edit': ['echo "Editing: $BOBO_FILE"'],
@@ -119,6 +123,8 @@ export function initHooksTemplate(): string {
       'pre-shell': ['echo "Running: $BOBO_COMMAND"'],
       'pre-commit': ['npm run lint'],
       'post-commit': ['echo "Committed: $BOBO_COMMIT_MSG"'],
+      'pre-tool-use': ['echo "Tool: $BOBO_TOOL_NAME (risk: $BOBO_TOOL_RISK)"'],
+      'post-tool-use': ['echo "Tool completed: $BOBO_TOOL_NAME"'],
     },
   }, null, 2);
 }

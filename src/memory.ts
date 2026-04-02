@@ -28,6 +28,13 @@ function getMemoryPaths() {
 }
 
 /**
+ * Get memory directory path (exported for dream mode and other modules)
+ */
+export function getMemoryDir(): string {
+  return getMemoryPaths().memoryDir;
+}
+
+/**
  * Ensure memory directories exist
  */
 function ensureMemoryDirs(): void {

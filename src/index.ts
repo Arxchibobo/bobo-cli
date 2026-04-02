@@ -45,6 +45,8 @@ import { getCompactStatus, compressHistory } from './compactor.js';
 import { getRouterStats, debugRoute } from './skill-router.js';
 import { formatCostReport } from './cost-tracker.js';
 import { getPreset, listPresets } from './providers.js';
+import { runDream, formatDreamResult, shouldAutoDream } from './dream.js';
+import { runVerification, formatVerificationResult } from './verification-agent.js';
 import chalk from 'chalk';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -804,8 +806,22 @@ async function runRepl(opts: ReplOptions): Promise<void> {
     }
   });
 
-  rl.on('close', () => {
+  rl.on('close', async () => {
     autoSave();
+
+    // Auto-dream on session end if needed
+    if (shouldAutoDream()) {
+      printLine(chalk.dim('\n🌙 Consolidating memories...'));
+      try {
+        const dreamResult = await runDream({ verbose: false });
+        if (dreamResult.insights.length > 0) {
+          printLine(chalk.green(`✨ Extracted ${dreamResult.insights.length} insights during shutdown`));
+        }
+      } catch {
+        // Silent failure on shutdown
+      }
+    }
+
     runHooks('session-end');
     shutdownMcpServers();
     killAllProcesses();
@@ -1108,21 +1124,39 @@ async function runRepl(opts: ReplOptions): Promise<void> {
       continue;
     }
 
-    // ─── /dream ───
+    // ─── /dream (KAIROS memory consolidation) ───
     if (input === '/dream') {
-      abortController = new AbortController();
+      printLine(chalk.dim('🌙 Running KAIROS dream mode...'));
       try {
-        const result = await runAgent(
-          'Perform memory consolidation: scan recent memories and conversations, extract recurring patterns and promote to long-term memory, merge redundant entries, clean up completed tasks. Use search_memory and save_memory tools. Report what you consolidated.',
-          history,
-          { signal: abortController.signal, model: currentModel },
-        );
-        history = result.history;
+        const dreamResult = await runDream({ verbose: true });
+        printLine(formatDreamResult(dreamResult));
       } catch (e) {
-        if ((e as Error).message !== 'Aborted') printError((e as Error).message);
+        printError(`Dream mode failed: ${(e as Error).message}`);
       }
-      abortController = null;
-      printLine();
+      showPrompt();
+      continue;
+    }
+
+    // ─── /verify (verification agent) ───
+    if (input.startsWith('/verify')) {
+      const task = input.replace('/verify', '').trim() || 'Verify current project state';
+      printLine(chalk.dim('🔍 Running verification agent...'));
+      try {
+        const verifyResult = await runVerification(task, lastResponse || '', {
+          cwd: process.cwd(),
+        });
+        printLine(formatVerificationResult(verifyResult));
+
+        // If verification failed, suggest fixes
+        if (verifyResult.verdict === 'FAIL' && verifyResult.suggestedFixes) {
+          printLine(chalk.yellow('\n💡 Suggested next steps:'));
+          for (const fix of verifyResult.suggestedFixes) {
+            printLine(chalk.dim(`   • ${fix}`));
+          }
+        }
+      } catch (e) {
+        printError(`Verification failed: ${(e as Error).message}`);
+      }
       showPrompt();
       continue;
     }

@@ -1,5 +1,6 @@
 /**
  * Sub-agent management — spawn, list, show background agents.
+ * Enhanced with role-based isolation (explore/plan/worker/verify).
  */
 
 import { fork, type ChildProcess } from 'node:child_process';
@@ -11,6 +12,15 @@ import { getConfigDir } from './config.js';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const MAX_CONCURRENT = 3;
 
+/**
+ * Agent role types with different permission levels.
+ * - explore: Read-only exploration (read_file, list_directory, search_files, shell with restrictions)
+ * - plan: Read-only planning mode (outputs task plans but cannot modify files)
+ * - worker: Full tool permissions (but injected with anti-recursion prompt)
+ * - verify: Uses verification-agent logic to validate work
+ */
+export type AgentRole = 'explore' | 'plan' | 'worker' | 'verify';
+
 interface SubAgentTask {
   id: string;
   task: string;
@@ -21,6 +31,7 @@ interface SubAgentTask {
   result?: string;
   error?: string;
   pid?: number;
+  role?: AgentRole; // Role-based permission level
 }
 
 // Track running processes in memory
@@ -38,9 +49,145 @@ function ensureAgentsDir(): void {
 }
 
 /**
+ * Get allowed tools for a specific role.
+ */
+export function getAllowedToolsForRole(role: AgentRole): string[] {
+  switch (role) {
+    case 'explore':
+      // Read-only tools for exploration
+      return [
+        'read_file',
+        'list_directory',
+        'search_files',
+        'git_status',
+        'git_diff',
+        'git_log',
+        'search_memory',
+      ];
+
+    case 'plan':
+      // Read-only + planning tools
+      return [
+        'read_file',
+        'list_directory',
+        'search_files',
+        'git_status',
+        'git_diff',
+        'git_log',
+        'search_memory',
+      ];
+
+    case 'worker':
+      // Full access (but will be injected with anti-recursion prompt)
+      return ['*']; // All tools allowed
+
+    case 'verify':
+      // Verification tools
+      return [
+        'read_file',
+        'list_directory',
+        'search_files',
+        'shell', // For running build/test/lint
+        'git_status',
+        'git_diff',
+      ];
+
+    default:
+      return [];
+  }
+}
+
+/**
+ * Get role-specific system prompt injection.
+ */
+export function getRolePromptInjection(role: AgentRole): string {
+  switch (role) {
+    case 'explore':
+      return `
+# Role: Explorer Agent
+
+You are an exploration agent with READ-ONLY access. Your job is to:
+- Read and analyze files
+- Search for patterns and information
+- Report findings clearly
+
+You CANNOT:
+- Modify any files (write_file, edit_file)
+- Execute arbitrary shell commands
+- Create or delete files
+- Make git commits
+
+Focus on gathering information and presenting it clearly.`;
+
+    case 'plan':
+      return `
+# Role: Planning Agent
+
+You are a planning agent with READ-ONLY access. Your job is to:
+- Analyze the codebase and requirements
+- Create detailed task breakdowns
+- Identify dependencies and risks
+- Propose implementation approaches
+
+You CANNOT:
+- Modify any files
+- Execute code changes
+- Make commits
+
+Output a structured plan with:
+1. Tasks broken down into steps
+2. File paths that need changes
+3. Potential risks or blockers
+4. Estimated complexity`;
+
+    case 'worker':
+      return `
+# Role: Worker Agent
+
+You are a worker agent with FULL tool access. Your job is to:
+- Execute tasks efficiently
+- Make file changes as needed
+- Run tests and verify your work
+- Report completion status
+
+CRITICAL CONSTRAINTS:
+- You are a WORKER, not a manager
+- NEVER spawn sub-agents or delegate work
+- Execute tasks directly yourself
+- If you encounter blockers, report them immediately
+
+Focus on DOING the work, not planning or delegating.`;
+
+    case 'verify':
+      return `
+# Role: Verification Agent
+
+You are a verification agent using 'try to break it' philosophy. Your job is to:
+- Run build/test/lint checks
+- Probe for edge cases and boundary conditions
+- Test actual functionality (API calls, CLI commands)
+- Report honest assessment
+
+You SHOULD:
+- Be adversarial - try to find what's broken
+- Run all available verification steps
+- Test with unusual inputs
+- Check for security issues
+
+You MUST:
+- Return VERDICT: PASS / FAIL / PARTIAL
+- Provide specific evidence for failures
+- Suggest concrete fixes`;
+
+    default:
+      return '';
+  }
+}
+
+/**
  * Spawn a new sub-agent to run a task in the background.
  */
-export function spawnSubAgent(task: string): { id: string; error?: string } {
+export function spawnSubAgent(task: string, role: AgentRole = 'worker'): { id: string; error?: string } {
   ensureAgentsDir();
 
   // Check concurrent limit
@@ -49,7 +196,7 @@ export function spawnSubAgent(task: string): { id: string; error?: string } {
     return { id: '', error: `Max ${MAX_CONCURRENT} concurrent sub-agents. Wait for one to finish or check /agents.` };
   }
 
-  const id = `agent-${Date.now().toString(36)}`;
+  const id = `agent-${Date.now().toString(36)}-${role}`;
   const taskFile = join(getAgentsDir(), `${id}.json`);
 
   const taskData: SubAgentTask = {
@@ -58,6 +205,7 @@ export function spawnSubAgent(task: string): { id: string; error?: string } {
     cwd: process.cwd(),
     status: 'running',
     startedAt: new Date().toISOString(),
+    role,
   };
 
   writeFileSync(taskFile, JSON.stringify(taskData, null, 2));

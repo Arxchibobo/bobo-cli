@@ -110,39 +110,54 @@ export async function runAgent(
     options.onAutoCompact();
   }
 
-  // Build system prompt with all context layers
-  const extraParts: string[] = [];
+  // Build system prompt with STATIC/DYNAMIC separation for cache optimization
+  const staticParts: string[] = [];  // Cacheable: identity, rules, base knowledge
+  const dynamicParts: string[] = []; // Non-cacheable: session state, memory, context
 
-  // Layer 0: BOBO.md project instructions (highest priority)
+  // === STATIC SECTION (Cacheable) ===
+
+  // Load base knowledge (identity + rules)
+  const baseKnowledge = loadKnowledge({
+    userMessage,
+    loadAll: history.length === 0,
+    extraContext: '', // No dynamic context yet
+  });
+  staticParts.push(baseKnowledge);
+
+  // Layer 0: BOBO.md project instructions (static per project)
   const boboMd = loadBoboMd();
   if (boboMd) {
-    extraParts.push(`# Project Instructions (BOBO.md)\n\n${boboMd}`);
+    staticParts.push(`# Project Instructions (BOBO.md)\n\n${boboMd}`);
   }
 
-  // Layer 1: Skill routing (intelligent content-based triggering)
+  // Layer 1: Skill routing (varies per message, but definitions are static)
   const skillMatches = routeMessage(userMessage);
   const { prompt: routedSkillPrompts, loaded: loadedSkills } = loadMatchedSkillPrompts(skillMatches);
-
-  // Fallback: also check legacy skill system for skills without routes
   const legacySkillPrompts = loadSkillPrompts(userMessage);
-
   const combinedSkillPrompts = [routedSkillPrompts, legacySkillPrompts].filter(Boolean).join('\n\n');
   if (combinedSkillPrompts) {
-    extraParts.push(combinedSkillPrompts);
+    staticParts.push(combinedSkillPrompts);
     if (options.matchedSkills) {
       options.matchedSkills.push(...loadedSkills);
     }
   }
 
-  // Layer 2: Persistent memory
+  // === DYNAMIC BOUNDARY MARKER ===
+  const dynamicBoundary = '\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
+    '⚡ DYNAMIC CONTEXT BOUNDARY — Content below changes frequently\n' +
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+
+  // === DYNAMIC SECTION (Non-cacheable) ===
+
+  // Layer 2: Persistent memory (changes with learning)
   const memory = loadMemory();
-  if (memory) extraParts.push(`# 你的记忆\n\n${memory}`);
+  if (memory) dynamicParts.push(`# 你的记忆\n\n${memory}`);
 
-  // Layer 3: Project context
+  // Layer 3: Project context (can change as project evolves)
   const projectKnowledge = loadProjectKnowledge();
-  if (projectKnowledge) extraParts.push(`# 项目上下文\n\n${projectKnowledge}`);
+  if (projectKnowledge) dynamicParts.push(`# 项目上下文\n\n${projectKnowledge}`);
 
-  // Layer 4: Environment + effort level
+  // Layer 4: Environment + session state
   const turnCount = history.filter(m => m.role === 'user').length;
   let envInfo = `# Environment\n\nWorking directory: ${process.cwd()}\nConversation turns: ${turnCount}\nModel: ${model}\nEffort: ${effort}`;
   if (isClaudeCodeAvailable()) {
@@ -151,17 +166,18 @@ export async function runAgent(
   if (turnCount >= 10) {
     envInfo += '\n\n⚠️ Context Decay Warning: 对话已超过 10 轮，编辑文件前必须重新读取确认内容。';
   }
-  extraParts.push(envInfo);
+  dynamicParts.push(envInfo);
 
-  // Layer 5: Effort level guidance
+  // Layer 5: Effort level guidance (changes with effort setting)
   const effortPrompt = effortToPrompt(effort);
-  if (effortPrompt) extraParts.push(effortPrompt);
+  if (effortPrompt) dynamicParts.push(effortPrompt);
 
-  const systemPrompt = loadKnowledge({
-    userMessage,
-    loadAll: history.length === 0,
-    extraContext: extraParts.join('\n\n---\n\n'),
-  });
+  // Combine static and dynamic sections
+  const systemPrompt = [
+    ...staticParts,
+    dynamicBoundary,
+    ...dynamicParts,
+  ].join('\n\n---\n\n');
 
   const messages: ChatCompletionMessageParam[] = [
     { role: 'system', content: systemPrompt },
