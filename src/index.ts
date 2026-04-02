@@ -41,6 +41,9 @@ import { startWatch } from './watcher.js';
 import { runAutonomous } from './autonomous.js';
 import { killAllProcesses } from './tools/process-manager.js';
 import { getCompactStatus, compressHistory } from './compactor.js';
+import { getRouterStats, debugRoute } from './skill-router.js';
+import { formatCostReport } from './cost-tracker.js';
+import { getPreset, listPresets } from './providers.js';
 import chalk from 'chalk';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -1099,6 +1102,8 @@ async function runRepl(opts: ReplOptions): Promise<void> {
       if (mcpServers.length > 0) {
         printLine(`  MCP:        ${mcpServers.filter(s => s.ready).length}/${mcpServers.length} servers (${mcpServers.reduce((a, s) => a + s.toolCount, 0)} tools)`);
       }
+      printLine(chalk.dim('  ── Cost ──'));
+      printLine(`  ${formatCostReport(currentModel).split('\n').join('\n  ')}`);
       showPrompt();
       continue;
     }
@@ -1155,6 +1160,54 @@ async function runRepl(opts: ReplOptions): Promise<void> {
       continue;
     }
 
+    // ─── /cost ───
+    if (input === '/cost') {
+      printLine(chalk.cyan('💰 API Cost:'));
+      printLine(`  ${formatCostReport(currentModel).split('\n').join('\n  ')}`);
+      showPrompt();
+      continue;
+    }
+
+    // ─── /route (skill router debug) ───
+    if (input.startsWith('/route ')) {
+      const query = input.slice(7).trim();
+      if (query) {
+        printLine(chalk.cyan('🔀 Skill Route Debug:'));
+        printLine(debugRoute(query));
+      } else {
+        const stats = getRouterStats();
+        printLine(chalk.cyan('🔀 Skill Router Stats:'));
+        printLine(`  Total: ${stats.totalSkills} | Kernel: ${stats.kernel} | Auto: ${stats.auto} | Manual: ${stats.manual}`);
+        printLine(`  Intent categories: ${stats.intents}`);
+      }
+      showPrompt();
+      continue;
+    }
+
+    // ─── /provider ───
+    if (input.startsWith('/provider')) {
+      const arg = input.slice(9).trim();
+      if (!arg) {
+        printLine(chalk.cyan('🌐 Available Providers:'));
+        printLine(listPresets());
+        printLine(chalk.dim('\n  Usage: /provider <name> — switch to provider'));
+      } else {
+        const preset = getPreset(arg);
+        if (!preset) {
+          printError(`Unknown provider: ${arg}`);
+        } else {
+          currentModel = preset.defaultModel;
+          // Note: baseUrl and apiKey require config set
+          printSuccess(`Switched model to ${preset.defaultModel}`);
+          printLine(chalk.dim(`  Base URL: ${preset.baseUrl}`));
+          printLine(chalk.dim(`  Set API key: bobo config set apiKey <key>`));
+          printLine(chalk.dim(`  Set base URL: bobo config set baseUrl ${preset.baseUrl}`));
+        }
+      }
+      showPrompt();
+      continue;
+    }
+
     // ─── /help ───
     if (input === '/help') {
       printLine(chalk.cyan.bold('Commands:'));
@@ -1197,9 +1250,16 @@ async function runRepl(opts: ReplOptions): Promise<void> {
       printLine('  bobo --full-auto  Auto-approve tool calls');
       printLine('  bobo --yolo  No sandbox, no approvals');
       printLine('  bobo watch   File watcher (daemon mode)');
+      printLine('  bobo run     Autonomous agent loop');
       printLine('  bobo mcp     MCP server management');
       printLine('  bobo hooks   Lifecycle hook management');
       printLine('  bobo doctor  Environment check');
+      printLine('');
+      printLine(chalk.dim('  Debug'));
+      printLine('  /cost        API cost this session');
+      printLine('  /bg          Background process list');
+      printLine('  /route <msg> Skill router debug');
+      printLine('  /provider    Switch AI provider');
       showPrompt();
       continue;
     }

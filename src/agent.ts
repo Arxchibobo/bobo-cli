@@ -10,12 +10,14 @@ import { loadConfig, type EffortLevel, type PermissionMode } from './config.js';
 import { loadKnowledge } from './knowledge.js';
 import { loadMemory } from './memory.js';
 import { loadSkillPrompts } from './skills.js';
+import { routeMessage, loadMatchedSkillPrompts, buildRouteIndex } from './skill-router.js';
 import { loadProjectKnowledge } from './project.js';
 import { toolDefinitions, executeTool } from './tools/index.js';
 import { isAdvancedTool, executeAdvancedTool } from './tools/advanced.js';
 import { isBrowserTool, executeBrowserTool } from './tools/browser.js';
 import { getMcpToolDefinitions, executeMcpTool, isMcpTool } from './mcp-client.js';
 import { printStreaming, printToolCall, printToolResult, printError, printLine } from './ui.js';
+import { recordUsage, getStats } from './cost-tracker.js';
 import { Spinner } from './spinner.js';
 
 export interface AgentOptions {
@@ -98,6 +100,7 @@ export async function runAgent(
     baseURL: config.baseUrl,
   });
 
+  const callStartTime = Date.now();
   const spinner = new Spinner();
 
   // Check for auto-compact (when context is getting large)
@@ -115,13 +118,18 @@ export async function runAgent(
     extraParts.push(`# Project Instructions (BOBO.md)\n\n${boboMd}`);
   }
 
-  // Layer 1: Active skills
-  const skillPrompts = loadSkillPrompts(userMessage);
-  if (skillPrompts) {
-    extraParts.push(skillPrompts);
+  // Layer 1: Skill routing (intelligent content-based triggering)
+  const skillMatches = routeMessage(userMessage);
+  const { prompt: routedSkillPrompts, loaded: loadedSkills } = loadMatchedSkillPrompts(skillMatches);
+
+  // Fallback: also check legacy skill system for skills without routes
+  const legacySkillPrompts = loadSkillPrompts(userMessage);
+
+  const combinedSkillPrompts = [routedSkillPrompts, legacySkillPrompts].filter(Boolean).join('\n\n');
+  if (combinedSkillPrompts) {
+    extraParts.push(combinedSkillPrompts);
     if (options.matchedSkills) {
-      const matches = skillPrompts.match(/# (\S+)/g);
-      if (matches) options.matchedSkills.push(...matches.map(m => m.replace('# ', '')));
+      options.matchedSkills.push(...loadedSkills);
     }
   }
 
@@ -227,6 +235,14 @@ export async function runAgent(
         });
 
         const choice = completion.choices[0];
+        // Record usage
+        if (completion.usage) {
+          recordUsage(
+            completion.usage.prompt_tokens || 0,
+            completion.usage.completion_tokens || 0,
+            choice?.message?.tool_calls?.length || 0
+          );
+        }
         if (choice?.message?.content) {
           assistantContent = choice.message.content;
           fullResponse += assistantContent;
@@ -326,6 +342,11 @@ export async function runAgent(
     { role: 'user', content: userMessage },
     ...messages.slice(history.length + 2),
   ];
+
+  // Ring terminal bell if response took >5s (notify user)
+  if (Date.now() - callStartTime > 5000 && !options.quiet) {
+    process.stderr.write('\x07'); // BEL character
+  }
 
   return { response: fullResponse, history: newHistory };
 }
