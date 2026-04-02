@@ -38,6 +38,7 @@ import { slashCompleter } from './completer.js';
 import { runHooks, initHooksTemplate } from './hooks.js';
 import { initMcpServers, shutdownMcpServers, getMcpStatus } from './mcp-client.js';
 import { startWatch } from './watcher.js';
+import { runAutonomous } from './autonomous.js';
 import chalk from 'chalk';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -439,6 +440,26 @@ program
       dir: process.cwd(),
       recursive: true,
       ignore,
+    });
+  });
+
+// ─── Run command (autonomous agent loop) ─────────────────────
+
+program
+  .command('run <task>')
+  .description('Autonomous mode: give a task, Bobo runs until done (like Claude Code agent loop)')
+  .option('--model <model>', 'Override model')
+  .option('--effort <level>', 'Effort level (low/medium/high)', 'high')
+  .option('--max-iterations <n>', 'Maximum iterations', '5')
+  .option('--log <path>', 'Log file path')
+  .action(async (task: string, opts: { model?: string; effort?: string; maxIterations?: string; log?: string }) => {
+    await runAutonomous({
+      task,
+      model: opts.model,
+      effort: (opts.effort || 'high') as EffortLevel,
+      permissionMode: 'auto',
+      maxIterations: parseInt(opts.maxIterations || '5', 10),
+      logFile: opts.log,
     });
   });
 

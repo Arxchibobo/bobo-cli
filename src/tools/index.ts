@@ -6,6 +6,7 @@ import { saveMemory, searchMemory } from '../memory.js';
 import { plannerToolDefinitions, executePlannerTool, isPlannerTool } from '../planner.js';
 import { webToolDefinitions, executeWebTool, isWebTool } from '../web.js';
 import { runHooks } from '../hooks.js';
+import { advancedToolDefinitions, isAdvancedTool, executeAdvancedTool } from './advanced.js';
 import type { ChatCompletionTool } from 'openai/resources/index.js';
 
 // ─── Core Tool Definitions ───────────────────────────────────
@@ -223,6 +224,7 @@ const coreToolDefinitions: ChatCompletionTool[] = [
 
 export const toolDefinitions: ChatCompletionTool[] = [
   ...coreToolDefinitions,
+  ...advancedToolDefinitions,
   ...plannerToolDefinitions,
   ...webToolDefinitions,
 ];
@@ -234,6 +236,7 @@ export function executeTool(name: string, args: Record<string, unknown>): string
     // Check delegated tools first
     if (isPlannerTool(name)) return executePlannerTool(name, args);
     if (isWebTool(name)) return executeWebTool(name, args);
+    // Note: advanced tools are async, handled separately in agent.ts
 
     // Core tools
     switch (name) {
