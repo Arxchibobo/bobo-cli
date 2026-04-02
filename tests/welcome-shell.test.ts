@@ -14,7 +14,7 @@ function runCli(args: string[]): string {
 describe('welcome and product shell', () => {
   it('shows a polished help surface', () => {
     const output = runCli(['--help']);
-    expect(output).toContain('大波比');
+    expect(output).toContain('Bobo CLI');
     expect(output).toContain('kb');
     expect(output).toContain('rules');
     expect(output).toContain('skills');

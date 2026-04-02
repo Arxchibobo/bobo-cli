@@ -6,11 +6,11 @@ import { getStructuredKnowledgePath } from './structured/paths.js';
 import { renderSearchResult } from './structured/render-markdown.js';
 
 export function registerKnowledgeCommand(program: Command) {
-  const kb = program.command('kb').description('结构化知识库操作');
+  const kb = program.command('kb').description('Structured knowledge base operations');
 
   kb
     .command('search <query>')
-    .description('搜索结构化知识库')
+    .description('Search structured knowledge base')
     .action(async (query: string) => {
       const loader = new KnowledgeLoader(getStructuredKnowledgePath());
       const search = new KnowledgeSearch(loader);
@@ -25,7 +25,7 @@ export function registerKnowledgeCommand(program: Command) {
 
   kb
     .command('stats')
-    .description('显示结构化知识库统计')
+    .description('Show structured knowledge base stats')
     .action(async () => {
       const loader = new KnowledgeLoader(getStructuredKnowledgePath());
       const index = await loader.loadIndex();

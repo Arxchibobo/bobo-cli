@@ -38,27 +38,52 @@ export function printToolResult(result: string): void {
   }
 }
 
-export function printWelcome(): void {
-  const border = chalk.cyan('╭──────────────────────────────────────────────────────────────╮');
-  const footer = chalk.cyan('╰──────────────────────────────────────────────────────────────╯');
-  const title = chalk.cyan.bold('🐕  大波比 CLI');
-  const subtitle = chalk.dim('便携式 AI 工程助手 · REPL + 结构化知识库 + Scaffold');
-  const commands = chalk.dim('试试: /help  ·  bobo kb stats  ·  bobo rules show blocking-rules');
-  const controls = chalk.dim('输入问题开始对话，Ctrl+D 退出，Ctrl+C 取消当前请求');
+/**
+ * Claude Code-style boxed welcome screen
+ */
+export function printWelcome(info: {
+  version: string;
+  model: string;
+  toolCount: number;
+  skillsActive: number;
+  skillsTotal: number;
+  knowledgeCount: number;
+}): void {
+  const width = 48;
+  const pad = (s: string, w: number) => s + ' '.repeat(Math.max(0, w - stripAnsi(s).length));
+  const line = (content: string) => {
+    const stripped = stripAnsi(content);
+    const padding = Math.max(0, width - 4 - stripped.length);
+    return `${chalk.cyan('│')}  ${content}${' '.repeat(padding)}${chalk.cyan('│')}`;
+  };
+  const empty = `${chalk.cyan('│')}${' '.repeat(width - 2)}${chalk.cyan('│')}`;
 
-  console.log('');
-  console.log(border);
-  console.log(chalk.cyan('│ ') + title.padEnd(58) + chalk.cyan('│'));
-  console.log(chalk.cyan('│ ') + subtitle.padEnd(58) + chalk.cyan('│'));
-  console.log(chalk.cyan('│ ') + ''.padEnd(58) + chalk.cyan('│'));
-  console.log(chalk.cyan('│ ') + commands.padEnd(58) + chalk.cyan('│'));
-  console.log(chalk.cyan('│ ') + controls.padEnd(58) + chalk.cyan('│'));
-  console.log(footer);
-  console.log('');
+  const title = `${chalk.bold.white('🐕 Bobo CLI')}`;
+  const ver = chalk.dim(`v${info.version}`);
+  const titleLine = `${title}${' '.repeat(Math.max(1, width - 4 - stripAnsi(title).length - stripAnsi(ver).length))}${ver}`;
+
+  console.log();
+  console.log(`${chalk.cyan('╭')}${'─'.repeat(width - 2)}${chalk.cyan('╮')}`);
+  console.log(`${chalk.cyan('│')}  ${titleLine}  ${chalk.cyan('│')}`);
+  console.log(line(chalk.dim('Portable AI Engineering Assistant')));
+  console.log(empty);
+  console.log(line(`Model:     ${chalk.white(info.model)}`));
+  console.log(line(`Tools:     ${chalk.white(String(info.toolCount))} available`));
+  console.log(line(`Skills:    ${chalk.green(String(info.skillsActive))} active ${chalk.dim('/')} ${info.skillsTotal} total`));
+  console.log(line(`Knowledge: ${chalk.white(String(info.knowledgeCount))} files loaded`));
+  console.log(empty);
+  console.log(line(chalk.dim('Type /help for commands, Ctrl+D to exit')));
+  console.log(`${chalk.cyan('╰')}${'─'.repeat(width - 2)}${chalk.cyan('╯')}`);
+  console.log();
 }
 
 function truncate(s: string, maxLen: number): string {
   const oneLine = s.replace(/\n/g, ' ');
   if (oneLine.length <= maxLen) return oneLine;
   return oneLine.slice(0, maxLen - 3) + '...';
+}
+
+// Strip ANSI escape codes for length calculation
+function stripAnsi(s: string): string {
+  return s.replace(/\x1b\[[0-9;]*m/g, '');
 }

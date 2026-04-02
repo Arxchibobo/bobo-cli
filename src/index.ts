@@ -20,6 +20,7 @@ import { listKnowledgeFiles } from './knowledge.js';
 import { listSkills, setSkillEnabled, initSkills, importSkills } from './skills.js';
 import { initProject } from './project.js';
 import { getCurrentPlan, resetPlan } from './planner.js';
+import { toolDefinitions } from './tools/index.js';
 import { printWelcome, printError, printSuccess, printLine, printWarning } from './ui.js';
 import { registerKnowledgeCommand } from './knowledge-commands.js';
 import { registerRulesCommand } from './rules-commands.js';
@@ -39,9 +40,9 @@ const program = new Command();
 
 program
   .name('bobo')
-  .description('🐕 大波比 — 便携式 AI 工程助手 CLI')
+  .description('🐕 Bobo CLI — Portable AI Engineering Assistant')
   .version(version)
-  .argument('[prompt...]', '一次性执行的提示词')
+  .argument('[prompt...]', 'Run a one-shot prompt without entering REPL')
   .action(async (promptParts: string[]) => {
     const prompt = promptParts.join(' ').trim();
     if (prompt) {
@@ -53,11 +54,11 @@ program
 
 // ─── Config subcommand ───────────────────────────────────────
 
-const configCmd = program.command('config').description('配置管理');
+const configCmd = program.command('config').description('Manage configuration');
 
 configCmd
   .command('set <key> <value>')
-  .description('设置配置项')
+  .description('Set a config value')
   .action((key: string, value: string) => {
     try {
       setConfigValue(key, value);
@@ -70,7 +71,7 @@ configCmd
 
 configCmd
   .command('get <key>')
-  .description('获取配置项')
+  .description('Get a config value')
   .action((key: string) => {
     const value = getConfigValue(key);
     if (value === undefined) {
@@ -82,7 +83,7 @@ configCmd
 
 configCmd
   .command('list')
-  .description('显示所有配置')
+  .description('Show all configuration')
   .action(() => {
     const config = listConfig();
     for (const [k, v] of Object.entries(config)) {
@@ -94,7 +95,7 @@ configCmd
 
 program
   .command('init')
-  .description('初始化 ~/.bobo/ 目录和知识库')
+  .description('Initialize ~/.bobo/ directory and knowledge base')
   .action(() => {
     ensureConfigDir();
     const config = loadConfig();
@@ -104,7 +105,6 @@ program
       mkdirSync(knowledgeDir, { recursive: true });
     }
 
-    // Copy all bundled knowledge files
     const bundledDir = join(__dirname, '..', 'knowledge');
     if (existsSync(bundledDir)) {
       const files = readdirSync(bundledDir).filter(f => f.endsWith('.md'));
@@ -118,7 +118,6 @@ program
       }
     }
 
-    // Create memory directories
     const memoryDir = join(getConfigDir(), 'memory');
     const learningsDir = join(getConfigDir(), '.learnings');
     for (const dir of [memoryDir, learningsDir]) {
@@ -128,22 +127,21 @@ program
       }
     }
 
-    // Initialize skills
     initSkills();
 
     printSuccess(`Initialized ${getConfigDir()}`);
-    printLine(`知识库: ${knowledgeDir}`);
-    printWarning('记得配置 API Key: bobo config set apiKey <your-key>');
+    printLine(`Knowledge: ${knowledgeDir}`);
+    printWarning('Configure your API key: bobo config set apiKey <your-key>');
   });
 
 // ─── Knowledge subcommand ────────────────────────────────────
 
 program
   .command('knowledge')
-  .description('查看知识库信息')
+  .description('Show knowledge base files')
   .action(() => {
     const files = listKnowledgeFiles();
-    console.log(chalk.cyan.bold('\n📚 知识库文件:\n'));
+    console.log(chalk.cyan.bold('\n📚 Knowledge Base:\n'));
     for (const f of files) {
       const typeIcon = f.type === 'always' ? '🔵' : f.type === 'on-demand' ? '🟡' : '🟢';
       const sourceTag = f.source === 'user' ? chalk.green('user') : chalk.dim('bundled');
@@ -154,11 +152,11 @@ program
 
 // ─── Skill subcommand ────────────────────────────────────────
 
-const skillCmd = program.command('skill').description('Skill 管理');
+const skillCmd = program.command('skill').description('Manage skills');
 
 skillCmd
   .command('list')
-  .description('列出所有 Skill')
+  .description('List all skills')
   .action(() => {
     const skills = listSkills();
     console.log(chalk.cyan.bold('\n🧩 Skills:\n'));
@@ -172,7 +170,7 @@ skillCmd
 
 skillCmd
   .command('enable <name>')
-  .description('启用 Skill')
+  .description('Enable a skill')
   .action((name: string) => {
     const result = setSkillEnabled(name, true);
     console.log(result);
@@ -180,7 +178,7 @@ skillCmd
 
 skillCmd
   .command('disable <name>')
-  .description('禁用 Skill')
+  .description('Disable a skill')
   .action((name: string) => {
     const result = setSkillEnabled(name, false);
     console.log(result);
@@ -188,15 +186,16 @@ skillCmd
 
 skillCmd
   .command('import <path>')
-  .description('从 OpenClaw skills 目录批量导入 Skill')
+  .description('Batch import skills from an OpenClaw skills directory')
   .action((path: string) => {
-    // Resolve ~ to home dir
     const resolved = path.startsWith('~')
       ? join(process.env.HOME || '', path.slice(1))
       : path;
     const result = importSkills(resolved);
     console.log(result);
   });
+
+// ─── Structured knowledge commands ──────────────────────────
 
 registerKnowledgeCommand(program);
 registerRulesCommand(program);
@@ -205,11 +204,11 @@ registerStructuredTemplateCommand(program);
 
 // ─── Project subcommand ──────────────────────────────────────
 
-const projectCmd = program.command('project').description('项目管理');
+const projectCmd = program.command('project').description('Manage project configuration');
 
 projectCmd
   .command('init')
-  .description('在当前目录初始化 .bobo/ 项目配置')
+  .description('Initialize .bobo/ project config in current directory')
   .action(() => {
     const result = initProject();
     printSuccess(result);
@@ -231,18 +230,28 @@ async function runOneShot(prompt: string): Promise<void> {
 // ─── REPL mode ───────────────────────────────────────────────
 
 async function runRepl(): Promise<void> {
-  printWelcome();
-
   const config = loadConfig();
+  const skills = listSkills();
+  const knowledgeFiles = listKnowledgeFiles();
+
+  printWelcome({
+    version,
+    model: config.model,
+    toolCount: toolDefinitions.length,
+    skillsActive: skills.filter(s => s.enabled).length,
+    skillsTotal: skills.length,
+    knowledgeCount: knowledgeFiles.length,
+  });
+
   if (!config.apiKey) {
-    printWarning('API Key 未配置。运行: bobo config set apiKey <your-key>');
+    printWarning('API key not configured. Run: bobo config set apiKey <your-key>');
     printLine();
   }
 
   const rl = createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: chalk.green('你> '),
+    prompt: chalk.green('> '),
   });
 
   let history: ChatCompletionMessageParam[] = [];
@@ -252,16 +261,16 @@ async function runRepl(): Promise<void> {
     if (abortController) {
       abortController.abort();
       abortController = null;
-      printLine(chalk.dim('\n(已取消)'));
+      printLine(chalk.dim('\n(cancelled)'));
       rl.prompt();
     } else {
-      printLine(chalk.dim('\n(再按一次 Ctrl+C 或 Ctrl+D 退出)'));
+      printLine(chalk.dim('\n(press Ctrl+C again or Ctrl+D to exit)'));
       rl.prompt();
     }
   });
 
   rl.on('close', () => {
-    printLine(chalk.cyan('\n再见！汪汪~ 🐕'));
+    printLine(chalk.dim('\nGoodbye! 🐕'));
     process.exit(0);
   });
 
@@ -275,23 +284,21 @@ async function runRepl(): Promise<void> {
       continue;
     }
 
-    // Built-in commands
     if (input === '/quit' || input === '/exit') {
-      printLine(chalk.cyan('再见！汪汪~ 🐕'));
+      printLine(chalk.dim('Goodbye! 🐕'));
       process.exit(0);
     }
 
     if (input === '/clear') {
       history = [];
       resetPlan();
-      printSuccess('对话历史已清空');
+      printSuccess('Conversation cleared');
       rl.prompt();
       continue;
     }
 
     if (input === '/history') {
-      const turns = history.filter(m => m.role === 'user').length;
-      printLine(`对话轮数: ${turns}`);
+      printLine(`Turns: ${history.filter(m => m.role === 'user').length}`);
       rl.prompt();
       continue;
     }
@@ -299,45 +306,41 @@ async function runRepl(): Promise<void> {
     if (input === '/compact') {
       const userCount = history.filter(m => m.role === 'user').length;
       if (userCount > 4) {
-        // Use agent to do real nine-section compression
-        printLine(chalk.dim('执行九段式上下文压缩...'));
+        printLine(chalk.dim('Compacting context...'));
         abortController = new AbortController();
         try {
           const compactResult = await runAgent(
-            '执行九段式上下文压缩。分析到目前为止的对话，生成结构化摘要包含：' +
-            '1.主要请求和意图 2.关键技术概念 3.文件和代码 4.错误和修复 5.问题解决 ' +
-            '6.所有用户消息（关键！） 7.待办任务 8.当前工作状态 9.下一步（附原文引用）。' +
-            '直接输出摘要，不要调用任何工具。',
+            'Perform a nine-section context compression. Analyze the conversation so far and produce a structured summary covering: ' +
+            '1. Main requests/intent 2. Key technical concepts 3. Files and code 4. Errors and fixes 5. Problem resolution ' +
+            '6. All user messages 7. Pending tasks 8. Current work state 9. Next steps (with citations). ' +
+            'Output the summary directly, do not call any tools.',
             history,
             { signal: abortController.signal },
           );
-          // Replace history with the compact summary
           history = [
-            { role: 'user', content: '以下是之前对话的九段式压缩摘要，请基于此继续工作。' },
+            { role: 'user', content: 'Below is a compressed summary of our prior conversation. Continue from here.' },
             { role: 'assistant', content: compactResult.response },
           ];
-          printSuccess('✅ 上下文已压缩（九段式），保留结构化摘要');
+          printSuccess('Context compacted (nine-section summary)');
         } catch (e) {
           if ((e as Error).message !== 'Aborted') {
-            // Fallback to simple truncation
             history = history.slice(-8);
-            printSuccess('上下文已压缩（简单截断）');
+            printSuccess('Context compacted (truncated)');
           }
         }
         abortController = null;
       } else {
-        printWarning('对话很短，无需压缩');
+        printWarning('Conversation too short to compact');
       }
       rl.prompt();
       continue;
     }
 
     if (input === '/dream') {
-      // Trigger memory consolidation via the agent
       abortController = new AbortController();
       try {
         const result = await runAgent(
-          '执行 Dream 记忆整理：扫描最近的记忆和对话，提取重复模式→晋升到长期记忆，合并冗余条目，清理已完成任务。用 search_memory 搜索，用 save_memory 保存晋升的内容。完成后汇报整理结果。',
+          'Perform memory consolidation: scan recent memories and conversations, extract recurring patterns and promote to long-term memory, merge redundant entries, clean up completed tasks. Use search_memory and save_memory tools. Report what you consolidated.',
           history,
           { signal: abortController.signal },
         );
@@ -353,11 +356,12 @@ async function runRepl(): Promise<void> {
 
     if (input === '/status') {
       const cfg = loadConfig();
+      const turns = history.filter(m => m.role === 'user').length;
       printLine(chalk.cyan('📊 Session Status:'));
-      printLine(`  Model: ${cfg.model}`);
-      printLine(`  Turns: ${history.filter(m => m.role === 'user').length}`);
+      printLine(`  Model:    ${cfg.model}`);
+      printLine(`  Turns:    ${turns}`);
       printLine(`  Messages: ${history.length}`);
-      printLine(`  CWD: ${process.cwd()}`);
+      printLine(`  CWD:      ${process.cwd()}`);
       rl.prompt();
       continue;
     }
@@ -379,8 +383,8 @@ async function runRepl(): Promise<void> {
     }
 
     if (input === '/skills') {
-      const skills = listSkills();
-      for (const s of skills) {
+      const sklls = listSkills();
+      for (const s of sklls) {
         const icon = s.enabled ? '✅' : '❌';
         printLine(`  ${icon} ${s.name} — ${s.description}`);
       }
@@ -389,22 +393,21 @@ async function runRepl(): Promise<void> {
     }
 
     if (input === '/help') {
-      printLine(chalk.cyan('内置命令:'));
-      printLine('  /clear     — 清空对话历史');
-      printLine('  /compact   — 压缩上下文（九段式）');
-      printLine('  /dream     — 记忆整理（整合+晋升+清理）');
-      printLine('  /history   — 查看对话轮数');
-      printLine('  /status    — 查看会话状态');
-      printLine('  /plan      — 查看当前任务计划');
-      printLine('  /knowledge — 查看知识库');
-      printLine('  /skills    — 查看 Skill 列表');
-      printLine('  /quit      — 退出');
-      printLine('  /help      — 显示帮助');
+      printLine(chalk.cyan('Commands:'));
+      printLine('  /clear     — Clear conversation history');
+      printLine('  /compact   — Compress context (nine-section)');
+      printLine('  /dream     — Memory consolidation');
+      printLine('  /history   — Show turn count');
+      printLine('  /status    — Session status');
+      printLine('  /plan      — Show current task plan');
+      printLine('  /knowledge — List knowledge files');
+      printLine('  /skills    — List skills');
+      printLine('  /quit      — Exit');
+      printLine('  /help      — Show this help');
       rl.prompt();
       continue;
     }
 
-    // Run agent
     abortController = new AbortController();
     try {
       const result = await runAgent(input, history, { signal: abortController.signal });

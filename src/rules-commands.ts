@@ -7,11 +7,11 @@ import { renderRule, renderSearchResult } from './structured/render-markdown.js'
 import { renderTable } from './structured/render-table.js';
 
 export function registerRulesCommand(program: Command) {
-  const rules = program.command('rules').description('结构化规则浏览');
+  const rules = program.command('rules').description('Browse structured rules');
 
   rules
     .command('list')
-    .description('列出所有规则')
+    .description('List all rules')
     .option('-c, --category <cat>', '按分类过滤')
     .action(async (opts: { category?: string }) => {
       const loader = new KnowledgeLoader(getStructuredKnowledgePath());
@@ -43,7 +43,7 @@ export function registerRulesCommand(program: Command) {
 
   rules
     .command('search <query>')
-    .description('搜索规则')
+    .description('Search rules')
     .action(async (query: string) => {
       const loader = new KnowledgeLoader(getStructuredKnowledgePath());
       const search = new KnowledgeSearch(loader);

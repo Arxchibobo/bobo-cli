@@ -3,11 +3,11 @@ import chalk from 'chalk';
 import { registerTemplateProjectSubcommand } from './structured-skills-commands.js';
 
 export function registerStructuredTemplateCommand(program: Command) {
-  const template = program.command('template').description('结构化模板生成');
+  const template = program.command('template').description('Generate structured templates');
 
   template
     .command('skill')
-    .description('生成结构化技能模板')
+    .description('Generate skill template')
     .option('-n, --name <name>', '技能名称')
     .action((opts: { name?: string }) => {
       const name = opts.name || 'my-new-skill';
@@ -21,7 +21,7 @@ export function registerStructuredTemplateCommand(program: Command) {
 
   template
     .command('rule')
-    .description('生成结构化规则模板')
+    .description('Generate rule template')
     .option('-n, --name <name>', '规则名称')
     .action((opts: { name?: string }) => {
       const name = opts.name || 'my-new-rule';

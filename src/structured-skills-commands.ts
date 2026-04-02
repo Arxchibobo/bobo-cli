@@ -12,11 +12,11 @@ import { renderSearchResult, renderSkill } from './structured/render-markdown.js
 import { renderTable } from './structured/render-table.js';
 
 export function registerStructuredSkillsCommand(program: Command) {
-  const skills = program.command('skills').description('结构化技能浏览与组合');
+  const skills = program.command('skills').description('Browse and compose structured skills');
 
   skills
     .command('list')
-    .description('列出结构化技能')
+    .description('List structured skills')
     .option('-c, --category <cat>', '按分类过滤')
     .action(async (opts: { category?: string }) => {
       const loader = new KnowledgeLoader(getStructuredKnowledgePath());
@@ -35,7 +35,7 @@ export function registerStructuredSkillsCommand(program: Command) {
 
   skills
     .command('show <id>')
-    .description('显示结构化技能全文')
+    .description('Show full skill content')
     .action(async (id: string) => {
       const loader = new KnowledgeLoader(getStructuredKnowledgePath());
       const skill = await loader.loadSkill(id);
@@ -48,7 +48,7 @@ export function registerStructuredSkillsCommand(program: Command) {
 
   skills
     .command('search <query>')
-    .description('搜索结构化技能')
+    .description('Search structured skills')
     .action(async (query: string) => {
       const loader = new KnowledgeLoader(getStructuredKnowledgePath());
       const search = new KnowledgeSearch(loader);
@@ -62,7 +62,7 @@ export function registerStructuredSkillsCommand(program: Command) {
 
   skills
     .command('deps <id>')
-    .description('显示结构化技能依赖顺序')
+    .description('Show skill dependency order')
     .action(async (id: string) => {
       const loader = new KnowledgeLoader(getStructuredKnowledgePath());
       const runner = new SkillRunner(loader);
@@ -88,7 +88,7 @@ export function registerStructuredSkillsCommand(program: Command) {
 
   skills
     .command('export <id>')
-    .description('导出结构化技能为 markdown')
+    .description('Export structured skill as markdown')
     .option('-o, --output <file>', '输出文件路径')
     .action(async (id: string, opts: { output?: string }) => {
       const loader = new KnowledgeLoader(getStructuredKnowledgePath());
@@ -107,7 +107,7 @@ export function registerStructuredSkillsCommand(program: Command) {
 
   skills
     .command('import <file>')
-    .description('导入技能 markdown 到结构化知识库')
+    .description('Import skill markdown into knowledge base')
     .action(async (file: string) => {
       const raw = await readFile(file, 'utf-8');
       const parsed = matter(raw);

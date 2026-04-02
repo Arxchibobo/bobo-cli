@@ -1,7 +1,7 @@
 {
   "name": "bobo-cli",
-  "version": "0.8.0",
-  "description": "大波比 — 便携式 AI 工程助手 CLI 🐕",
+  "version": "1.0.0",
+  "description": "Portable AI engineering assistant CLI with embedded knowledge, skills, and memory",
   "type": "module",
   "main": "dist/index.js",
   "bin": {

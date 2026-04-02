@@ -14,14 +14,14 @@ function runCli(args: string[]): string {
 describe('main branch baseline CLI', () => {
   it('shows top-level help', () => {
     const output = runCli(['--help']);
-    expect(output).toContain('大波比');
+    expect(output).toContain('Bobo CLI');
     expect(output).toContain('config');
     expect(output).toContain('skill');
   });
 
   it('shows knowledge command output', () => {
     const output = runCli(['knowledge']);
-    expect(output).toContain('知识库文件');
+    expect(output).toContain('Knowledge Base');
   });
 
   it('shows skill list output', () => {
