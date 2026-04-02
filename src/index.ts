@@ -40,6 +40,7 @@ import { initMcpServers, shutdownMcpServers, getMcpStatus } from './mcp-client.j
 import { startWatch } from './watcher.js';
 import { runAutonomous } from './autonomous.js';
 import { killAllProcesses } from './tools/process-manager.js';
+import { cleanupClaudeSessions } from './tools/claude-code.js';
 import { getCompactStatus, compressHistory } from './compactor.js';
 import { getRouterStats, debugRoute } from './skill-router.js';
 import { formatCostReport } from './cost-tracker.js';
@@ -468,6 +469,46 @@ program
     });
   });
 
+// ─── Evolve command (self-improvement via Claude Code) ───────
+
+program
+  .command('evolve [focus]')
+  .description('Self-improvement: use Claude Code to enhance Bobo CLI itself')
+  .option('--dry-run', 'Show what would be improved without making changes')
+  .action(async (focus: string | undefined, opts: { dryRun?: boolean }) => {
+    const { isClaudeCodeAvailable: ccAvailable, executeClaudeCodeTool: ccExec } = await import('./tools/claude-code.js');
+
+    if (!ccAvailable()) {
+      printError('Claude Code not found. Install: npm install -g @anthropic-ai/claude-code');
+      return;
+    }
+
+    const areas = focus || 'streaming output quality, error handling, test coverage';
+    const dryRun = opts.dryRun ? ' List the improvements but DO NOT make changes.' : '';
+
+    printLine(chalk.cyan.bold('\n🧬 Bobo Evolve — Self-Improvement Mode\n'));
+    printLine(chalk.dim(`  Focus: ${areas}`));
+    printLine(chalk.dim(`  Mode: ${opts.dryRun ? 'dry-run (preview only)' : 'live (will modify code)'}`));
+    printLine(chalk.dim('  Using Claude Code as implementation engine\n'));
+
+    const task = `You are improving Bobo CLI (an AI coding assistant CLI tool).
+The source code is in the current directory.
+Focus on: ${areas}
+
+Instructions:
+1. Read the relevant source files
+2. Identify specific improvements
+3. Implement the improvements${dryRun}
+4. Run \`npm run build\` to verify
+5. Summarize what you changed and why
+
+Keep changes minimal and focused. Do not break existing functionality.`;
+
+    printLine(chalk.dim('Delegating to Claude Code...'));
+    const result = ccExec('claude_code', { task, cwd: process.cwd() });
+    printLine(result);
+  });
+
 // ─── MCP command ─────────────────────────────────────────────
 
 const mcpCmd = program.command('mcp').description('Manage MCP (Model Context Protocol) servers');
@@ -768,6 +809,7 @@ async function runRepl(opts: ReplOptions): Promise<void> {
     runHooks('session-end');
     shutdownMcpServers();
     killAllProcesses();
+    cleanupClaudeSessions();
     disableStatusBar();
     printLine(chalk.dim('\nGoodbye! 🐕'));
     process.exit(0);

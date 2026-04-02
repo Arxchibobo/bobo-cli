@@ -12,6 +12,7 @@ import { loadMemory } from './memory.js';
 import { loadSkillPrompts } from './skills.js';
 import { routeMessage, loadMatchedSkillPrompts, buildRouteIndex } from './skill-router.js';
 import { loadProjectKnowledge } from './project.js';
+import { isClaudeCodeAvailable } from './tools/claude-code.js';
 import { toolDefinitions, executeTool } from './tools/index.js';
 import { isAdvancedTool, executeAdvancedTool } from './tools/advanced.js';
 import { isBrowserTool, executeBrowserTool } from './tools/browser.js';
@@ -144,6 +145,9 @@ export async function runAgent(
   // Layer 4: Environment + effort level
   const turnCount = history.filter(m => m.role === 'user').length;
   let envInfo = `# Environment\n\nWorking directory: ${process.cwd()}\nConversation turns: ${turnCount}\nModel: ${model}\nEffort: ${effort}`;
+  if (isClaudeCodeAvailable()) {
+    envInfo += '\n\nClaude Code: ✅ available — use claude_code tool for heavy refactors, multi-file changes, test suites, or autonomous long tasks. Keep simple edits in your own tools.';
+  }
   if (turnCount >= 10) {
     envInfo += '\n\n⚠️ Context Decay Warning: 对话已超过 10 轮，编辑文件前必须重新读取确认内容。';
   }

@@ -10,6 +10,7 @@ import { advancedToolDefinitions, isAdvancedTool, executeAdvancedTool } from './
 import { processToolDefinitions, isProcessTool, executeProcessTool } from './process-manager.js';
 import { gitAdvancedToolDefinitions, isGitAdvancedTool, executeGitAdvancedTool } from './git-advanced.js';
 import { browserToolDefinitions, isBrowserTool, executeBrowserTool } from './browser.js';
+import { claudeCodeToolDefinitions, isClaudeCodeTool, executeClaudeCodeTool, isClaudeCodeAvailable } from './claude-code.js';
 import type { ChatCompletionTool } from 'openai/resources/index.js';
 
 // ─── Core Tool Definitions ───────────────────────────────────
@@ -231,6 +232,7 @@ export const toolDefinitions: ChatCompletionTool[] = [
   ...processToolDefinitions,
   ...gitAdvancedToolDefinitions,
   ...browserToolDefinitions,
+  ...(isClaudeCodeAvailable() ? claudeCodeToolDefinitions : []),
   ...plannerToolDefinitions,
   ...webToolDefinitions,
 ];
@@ -244,6 +246,7 @@ export function executeTool(name: string, args: Record<string, unknown>): string
     if (isWebTool(name)) return executeWebTool(name, args);
     if (isProcessTool(name)) return executeProcessTool(name, args);
     if (isGitAdvancedTool(name)) return executeGitAdvancedTool(name, args);
+    if (isClaudeCodeTool(name)) return executeClaudeCodeTool(name, args);
     // Note: advanced tools and browser tools are async, handled in agent.ts
 
     // Core tools
