@@ -35,6 +35,9 @@ import { generateInsight } from './insight.js';
 import { spawnSubAgent, listSubAgents, getSubAgent } from './sub-agents.js';
 import { enableStatusBar, disableStatusBar, updateStatusBar, setupResizeHandler, renderStatusBar } from './statusbar.js';
 import { slashCompleter } from './completer.js';
+import { runHooks, initHooksTemplate } from './hooks.js';
+import { initMcpServers, shutdownMcpServers, getMcpStatus } from './mcp-client.js';
+import { startWatch } from './watcher.js';
 import chalk from 'chalk';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -424,6 +427,110 @@ skillCmd.command('import <path>').description('Batch import skills').action((pat
   console.log(importSkills(resolved));
 });
 
+// ─── Watch command (file watcher / daemon mode) ─────────────
+
+program
+  .command('watch')
+  .description('Watch files for changes and auto-run hooks (daemon-like mode)')
+  .option('--ignore <patterns>', 'Additional ignore patterns (comma-separated)', '')
+  .action((opts: { ignore: string }) => {
+    const ignore = opts.ignore ? opts.ignore.split(',').map(s => s.trim()) : [];
+    startWatch({
+      dir: process.cwd(),
+      recursive: true,
+      ignore,
+    });
+  });
+
+// ─── MCP command ─────────────────────────────────────────────
+
+const mcpCmd = program.command('mcp').description('Manage MCP (Model Context Protocol) servers');
+
+mcpCmd
+  .command('status')
+  .description('Show MCP server status')
+  .action(async () => {
+    await initMcpServers();
+    const status = getMcpStatus();
+    if (status.length === 0) {
+      printLine(chalk.dim('No MCP servers configured.'));
+      printLine(chalk.dim('Create ~/.bobo/mcp.json to add servers.'));
+      return;
+    }
+    printLine(chalk.cyan.bold('\n🔌 MCP Servers:\n'));
+    for (const s of status) {
+      const icon = s.ready ? chalk.green('●') : chalk.red('●');
+      printLine(`  ${icon} ${chalk.bold(s.name)} [${s.transport}] — ${s.toolCount} tools`);
+    }
+    printLine();
+    shutdownMcpServers();
+  });
+
+mcpCmd
+  .command('init')
+  .description('Create MCP configuration template')
+  .action(() => {
+    const configPath = join(getConfigDir(), 'mcp.json');
+    if (existsSync(configPath)) {
+      printWarning('mcp.json already exists');
+      return;
+    }
+    writeFileSync(configPath, JSON.stringify({
+      servers: [
+        {
+          name: 'example',
+          transport: 'stdio',
+          command: 'npx',
+          args: ['-y', '@modelcontextprotocol/server-filesystem', process.cwd()],
+          _comment: 'Replace with your MCP server',
+        },
+      ],
+    }, null, 2) + '\n');
+    printSuccess(`Created ${configPath}`);
+  });
+
+// ─── Hooks command ───────────────────────────────────────────
+
+program
+  .command('hooks')
+  .description('Manage lifecycle hooks')
+  .option('--init', 'Create hooks.json template')
+  .action((opts: { init?: boolean }) => {
+    if (opts.init) {
+      const hooksPath = join(getConfigDir(), 'hooks.json');
+      if (existsSync(hooksPath)) {
+        printWarning('hooks.json already exists');
+        return;
+      }
+      writeFileSync(hooksPath, initHooksTemplate() + '\n');
+      printSuccess(`Created ${hooksPath}`);
+      printLine(chalk.dim('  Available hooks: pre-edit, post-edit, pre-shell, post-shell, pre-commit, post-commit, session-end'));
+      return;
+    }
+    // Show current hooks
+    const hooksPath = join(getConfigDir(), 'hooks.json');
+    if (!existsSync(hooksPath)) {
+      printLine(chalk.dim('No hooks configured. Run: bobo hooks --init'));
+      return;
+    }
+    try {
+      const hooks = JSON.parse(readFileSync(hooksPath, 'utf-8'));
+      printLine(chalk.cyan.bold('\n🪝 Hooks:\n'));
+      for (const [event, cmds] of Object.entries(hooks)) {
+        if (event.startsWith('_')) continue;
+        const arr = Array.isArray(cmds) ? cmds : [cmds];
+        if (arr.length === 0) continue;
+        printLine(`  ${chalk.bold(event)}`);
+        for (const cmd of arr) {
+          printLine(`    → ${chalk.dim(String(cmd))}`);
+        }
+      }
+      printLine();
+    } catch {
+      printError('Failed to parse hooks.json');
+    }
+  });
+
 // ─── Structured knowledge commands ──────────────────────────
 
 registerKnowledgeCommand(program);
@@ -508,6 +615,9 @@ async function runRepl(opts: ReplOptions): Promise<void> {
   const knowledgeFiles = listKnowledgeFiles();
   const sessionStartTime = Date.now();
   const matchedSkills: string[] = [];
+
+  // Initialize MCP servers in background
+  initMcpServers().catch(() => { /* MCP init failures are non-fatal */ });
 
   // Runtime overrides
   let currentModel = opts.model || config.model;
@@ -629,6 +739,8 @@ async function runRepl(opts: ReplOptions): Promise<void> {
 
   rl.on('close', () => {
     autoSave();
+    runHooks('session-end');
+    shutdownMcpServers();
     disableStatusBar();
     printLine(chalk.dim('\nGoodbye! 🐕'));
     process.exit(0);
@@ -647,6 +759,8 @@ async function runRepl(opts: ReplOptions): Promise<void> {
     // ─── Exit ───
     if (input === '/quit' || input === '/exit') {
       autoSave();
+      runHooks('session-end');
+      shutdownMcpServers();
       disableStatusBar();
       printLine(chalk.dim('Goodbye! 🐕'));
       process.exit(0);
@@ -946,6 +1060,7 @@ async function runRepl(opts: ReplOptions): Promise<void> {
     // ─── /status ───
     if (input === '/status') {
       const turns = history.filter(m => m.role === 'user').length;
+      const mcpServers = getMcpStatus();
       printLine(chalk.cyan('📊 Session Status:'));
       printLine(`  Model:      ${currentModel}`);
       printLine(`  Effort:     ${currentEffort}`);
@@ -954,6 +1069,9 @@ async function runRepl(opts: ReplOptions): Promise<void> {
       printLine(`  Messages:   ${history.length}`);
       printLine(`  CWD:        ${process.cwd()}`);
       if (sessionName) printLine(`  Name:       ${sessionName}`);
+      if (mcpServers.length > 0) {
+        printLine(`  MCP:        ${mcpServers.filter(s => s.ready).length}/${mcpServers.length} servers (${mcpServers.reduce((a, s) => a + s.toolCount, 0)} tools)`);
+      }
       showPrompt();
       continue;
     }
@@ -980,6 +1098,24 @@ async function runRepl(opts: ReplOptions): Promise<void> {
         const icon = s.enabled ? '✅' : '❌';
         printLine(`  ${icon} ${s.name} — ${s.description}`);
       }
+      showPrompt();
+      continue;
+    }
+
+    // ─── /mcp ───
+    if (input === '/mcp') {
+      const mcpServers = getMcpStatus();
+      if (mcpServers.length === 0) {
+        printLine(chalk.dim('No MCP servers. Configure in ~/.bobo/mcp.json'));
+        printLine(chalk.dim('Run: bobo mcp init'));
+      } else {
+        printLine(chalk.cyan.bold('\n🔌 MCP Servers:\n'));
+        for (const s of mcpServers) {
+          const icon = s.ready ? chalk.green('●') : chalk.red('●');
+          printLine(`  ${icon} ${chalk.bold(s.name)} [${s.transport}] — ${s.toolCount} tools`);
+        }
+      }
+      printLine();
       showPrompt();
       continue;
     }
@@ -1012,17 +1148,22 @@ async function runRepl(opts: ReplOptions): Promise<void> {
       printLine('  /agents      List sub-agents');
       printLine('  /agents show <id>  Show sub-agent result');
       printLine('');
-      printLine(chalk.dim('  Knowledge'));
+      printLine(chalk.dim('  Knowledge & Integrations'));
       printLine('  /knowledge   List knowledge files');
       printLine('  /skills      List skills');
+      printLine('  /mcp         MCP server status');
       printLine('  /dream       Memory consolidation');
       printLine('');
-      printLine(chalk.dim('  CLI Flags'));
+      printLine(chalk.dim('  CLI Commands'));
       printLine('  bobo -p "q"  Non-interactive (supports piping)');
       printLine('  bobo -c      Continue last conversation');
       printLine('  bobo -r <id> Resume specific session');
       printLine('  bobo --full-auto  Auto-approve tool calls');
       printLine('  bobo --yolo  No sandbox, no approvals');
+      printLine('  bobo watch   File watcher (daemon mode)');
+      printLine('  bobo mcp     MCP server management');
+      printLine('  bobo hooks   Lifecycle hook management');
+      printLine('  bobo doctor  Environment check');
       showPrompt();
       continue;
     }

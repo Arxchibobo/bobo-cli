@@ -12,6 +12,7 @@ import { loadMemory } from './memory.js';
 import { loadSkillPrompts } from './skills.js';
 import { loadProjectKnowledge } from './project.js';
 import { toolDefinitions, executeTool } from './tools/index.js';
+import { getMcpToolDefinitions, executeMcpTool, isMcpTool } from './mcp-client.js';
 import { printStreaming, printToolCall, printToolResult, printError, printLine } from './ui.js';
 import { Spinner } from './spinner.js';
 
@@ -173,7 +174,7 @@ export async function runAgent(
         const stream = await client.chat.completions.create({
           model,
           messages,
-          tools: toolDefinitions,
+          tools: [...toolDefinitions, ...getMcpToolDefinitions()],
           max_tokens: config.maxTokens,
           stream: true,
         });
@@ -218,7 +219,7 @@ export async function runAgent(
         const completion = await client.chat.completions.create({
           model,
           messages,
-          tools: toolDefinitions,
+          tools: [...toolDefinitions, ...getMcpToolDefinitions()],
           max_tokens: config.maxTokens,
           stream: false,
         });
@@ -289,7 +290,14 @@ export async function runAgent(
           spinner.start(`Running ${tc.name}...`);
           printToolCall(tc.name, tc.arguments);
         }
-        const result = executeTool(tc.name, args);
+
+        // Route to MCP or built-in tool
+        let result: string;
+        if (isMcpTool(tc.name)) {
+          result = await executeMcpTool(tc.name, args);
+        } else {
+          result = executeTool(tc.name, args);
+        }
         spinner.stop();
         if (!options.quiet) printToolResult(result);
 

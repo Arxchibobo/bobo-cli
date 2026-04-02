@@ -1,0 +1,37 @@
+{
+  "name": "bobo-vscode",
+  "displayName": "Bobo CLI",
+  "description": "VS Code integration for Bobo CLI — AI Engineering Assistant",
+  "version": "0.1.0",
+  "publisher": "bobooo",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Programming Languages", "Other"],
+  "activationEvents": ["onCommand:bobo.open", "onCommand:bobo.ask"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "bobo.open", "title": "Bobo: Open Panel" },
+      { "command": "bobo.ask", "title": "Bobo: Ask" },
+      { "command": "bobo.explain", "title": "Bobo: Explain Selection" },
+      { "command": "bobo.fix", "title": "Bobo: Fix Selection" }
+    ],
+    "keybindings": [
+      { "command": "bobo.open", "key": "ctrl+shift+b", "mac": "cmd+shift+b" },
+      { "command": "bobo.ask", "key": "ctrl+shift+a", "mac": "cmd+shift+a" }
+    ],
+    "menus": {
+      "editor/context": [
+        { "command": "bobo.explain", "group": "bobo", "when": "editorHasSelection" },
+        { "command": "bobo.fix", "group": "bobo", "when": "editorHasSelection" }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.6.0"
+  }
+}

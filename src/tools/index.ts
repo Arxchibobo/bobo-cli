@@ -5,6 +5,7 @@ import { glob } from 'glob';
 import { saveMemory, searchMemory } from '../memory.js';
 import { plannerToolDefinitions, executePlannerTool, isPlannerTool } from '../planner.js';
 import { webToolDefinitions, executeWebTool, isWebTool } from '../web.js';
+import { runHooks } from '../hooks.js';
 import type { ChatCompletionTool } from 'openai/resources/index.js';
 
 // ─── Core Tool Definitions ───────────────────────────────────
@@ -237,17 +238,37 @@ export function executeTool(name: string, args: Record<string, unknown>): string
     // Core tools
     switch (name) {
       case 'read_file': return readFile(args);
-      case 'write_file': return writeFile(args);
-      case 'edit_file': return editFile(args);
+      case 'write_file': {
+        runHooks('pre-edit', { BOBO_FILE: args.path as string || '' });
+        const result = writeFile(args);
+        runHooks('post-edit', { BOBO_FILE: args.path as string || '' });
+        return result;
+      }
+      case 'edit_file': {
+        runHooks('pre-edit', { BOBO_FILE: args.path as string || '' });
+        const result = editFile(args);
+        runHooks('post-edit', { BOBO_FILE: args.path as string || '' });
+        return result;
+      }
       case 'search_files': return searchFiles(args);
       case 'list_directory': return listDirectory(args);
-      case 'shell': return shellExec(args);
+      case 'shell': {
+        runHooks('pre-shell', { BOBO_COMMAND: (args.command as string) || '' });
+        const result = shellExec(args);
+        runHooks('post-shell', { BOBO_COMMAND: (args.command as string) || '' });
+        return result;
+      }
       case 'save_memory': return saveMemoryTool(args);
       case 'search_memory': return searchMemoryTool(args);
       case 'git_status': return gitStatus(args);
       case 'git_diff': return gitDiff(args);
       case 'git_log': return gitLog(args);
-      case 'git_commit': return gitCommit(args);
+      case 'git_commit': {
+        runHooks('pre-commit', { BOBO_COMMIT_MSG: (args.message as string) || '' });
+        const result = gitCommit(args);
+        runHooks('post-commit', { BOBO_COMMIT_MSG: (args.message as string) || '' });
+        return result;
+      }
       case 'git_push': return gitPush(args);
       default: return `Error: Unknown tool "${name}"`;
     }
