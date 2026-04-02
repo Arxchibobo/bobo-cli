@@ -17,7 +17,7 @@ An AI-powered CLI assistant with embedded engineering knowledge, a pluggable ski
 
 ```bash
 # Install
-npm install -g bobo-cli
+npm install -g bobo-ai-cli
 
 # Initialize
 bobo init
