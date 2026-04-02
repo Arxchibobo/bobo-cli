@@ -9,6 +9,8 @@
 
 An AI-powered CLI assistant with embedded engineering knowledge, a pluggable skill system, persistent memory, and project-aware context — designed to be your pair-programming partner in the terminal.
 
+![Bobo CLI 介绍](assets/bobo-cli-intro.png)
+
 </div>
 
 ---
