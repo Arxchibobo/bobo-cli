@@ -30,6 +30,8 @@ import { registerStructuredTemplateCommand } from './structured-template-command
 import { saveSession, listSessions, loadSession, getRecentSession } from './sessions.js';
 import { generateInsight } from './insight.js';
 import { spawnSubAgent, listSubAgents, getSubAgent } from './sub-agents.js';
+import { enableStatusBar, disableStatusBar, setupResizeHandler } from './statusbar.js';
+import { slashCompleter } from './completer.js';
 import chalk from 'chalk';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -456,10 +458,22 @@ async function runRepl(): Promise<void> {
     }
   }
 
+  // Enable bottom status bar (Claude Code style)
+  if (process.stdout.isTTY) {
+    setupResizeHandler();
+    enableStatusBar({
+      model: config.model,
+      thinkingLevel: 'medium',
+      skillsCount: skills.filter(s => s.enabled).length,
+      cwd: process.cwd(),
+    });
+  }
+
   const rl = createInterface({
     input: process.stdin,
     output: process.stdout,
     prompt: chalk.green('> '),
+    completer: slashCompleter,
   });
 
   let abortController: AbortController | null = null;
@@ -486,6 +500,7 @@ async function runRepl(): Promise<void> {
 
   rl.on('close', () => {
     autoSave();
+    disableStatusBar();
     printLine(chalk.dim('\nGoodbye! 🐕'));
     process.exit(0);
   });
@@ -502,6 +517,7 @@ async function runRepl(): Promise<void> {
 
     if (input === '/quit' || input === '/exit') {
       autoSave();
+      disableStatusBar();
       printLine(chalk.dim('Goodbye! 🐕'));
       process.exit(0);
     }
