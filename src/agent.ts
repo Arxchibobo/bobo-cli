@@ -11,10 +11,15 @@ import { loadSkillPrompts } from './skills.js';
 import { loadProjectKnowledge } from './project.js';
 import { toolDefinitions, executeTool } from './tools/index.js';
 import { printStreaming, printToolCall, printToolResult, printError, printLine } from './ui.js';
+import { Spinner } from './spinner.js';
 
 export interface AgentOptions {
   onText?: (text: string) => void;
   signal?: AbortSignal;
+  /** Track which skills were matched (mutated by caller) */
+  matchedSkills?: string[];
+  /** Suppress spinner (for sub-agents) */
+  quiet?: boolean;
 }
 
 export async function runAgent(
@@ -33,19 +38,27 @@ export async function runAgent(
     baseURL: config.baseUrl,
   });
 
+  const spinner = new Spinner();
+
   // Build system prompt with all context layers (order matters)
   const extraParts: string[] = [];
 
   // Layer 1: Active skills (behavior rules — highest priority after knowledge)
-  // Passive triggering: only load skills relevant to the user's message
   const skillPrompts = loadSkillPrompts(userMessage);
-  if (skillPrompts) extraParts.push(skillPrompts);
+  if (skillPrompts) {
+    extraParts.push(skillPrompts);
+    // Track matched skills
+    if (options.matchedSkills) {
+      const matches = skillPrompts.match(/# (\S+)/g);
+      if (matches) options.matchedSkills.push(...matches.map(m => m.replace('# ', '')));
+    }
+  }
 
-  // Layer 2: Persistent memory (data — lower priority than rules)
+  // Layer 2: Persistent memory
   const memory = loadMemory();
   if (memory) extraParts.push(`# 你的记忆\n\n${memory}`);
 
-  // Layer 3: Project context (local project config + auto-detected files)
+  // Layer 3: Project context
   const projectKnowledge = loadProjectKnowledge();
   if (projectKnowledge) extraParts.push(`# 项目上下文\n\n${projectKnowledge}`);
 
@@ -77,9 +90,13 @@ export async function runAgent(
       throw new Error('Aborted');
     }
 
+    // Start thinking spinner
+    if (!options.quiet) spinner.start('Thinking...');
+
     try {
       let assistantContent = '';
       const toolCalls: Map<number, { id: string; name: string; arguments: string }> = new Map();
+      let firstChunkReceived = false;
 
       try {
         // Try streaming first
@@ -93,7 +110,13 @@ export async function runAgent(
 
         for await (const chunk of stream) {
           if (options.signal?.aborted) {
+            spinner.stop();
             throw new Error('Aborted');
+          }
+
+          if (!firstChunkReceived) {
+            spinner.stop();
+            firstChunkReceived = true;
           }
 
           const delta = chunk.choices[0]?.delta;
@@ -102,7 +125,7 @@ export async function runAgent(
           if (delta.content) {
             assistantContent += delta.content;
             fullResponse += delta.content;
-            printStreaming(delta.content);
+            if (!options.quiet) printStreaming(delta.content);
           }
 
           if (delta.tool_calls) {
@@ -120,8 +143,9 @@ export async function runAgent(
         }
       } catch (streamErr) {
         if ((streamErr as Error).message === 'Aborted') throw streamErr;
+        spinner.stop();
         // Fallback to non-streaming mode
-        printLine(chalk.dim('(falling back to non-streaming mode...)'));
+        if (!options.quiet) printLine(chalk.dim('(falling back to non-streaming mode...)'));
         const completion = await client.chat.completions.create({
           model: config.model,
           messages,
@@ -134,7 +158,7 @@ export async function runAgent(
         if (choice?.message?.content) {
           assistantContent = choice.message.content;
           fullResponse += assistantContent;
-          printStreaming(assistantContent);
+          if (!options.quiet) printStreaming(assistantContent);
         }
         if (choice?.message?.tool_calls) {
           for (let idx = 0; idx < choice.message.tool_calls.length; idx++) {
@@ -147,6 +171,9 @@ export async function runAgent(
           }
         }
       }
+
+      // Ensure spinner is stopped
+      spinner.stop();
 
       const assistantMsg: ChatCompletionAssistantMessageParam = {
         role: 'assistant',
@@ -164,11 +191,11 @@ export async function runAgent(
       messages.push(assistantMsg);
 
       if (toolCalls.size === 0) {
-        if (assistantContent) printLine();
+        if (assistantContent && !options.quiet) printLine();
         break;
       }
 
-      if (assistantContent) printLine();
+      if (assistantContent && !options.quiet) printLine();
 
       for (const tc of toolCalls.values()) {
         let args: Record<string, unknown> = {};
@@ -178,9 +205,14 @@ export async function runAgent(
           args = {};
         }
 
-        printToolCall(tc.name, tc.arguments);
+        // Show tool spinner
+        if (!options.quiet) {
+          spinner.start(`Running ${tc.name}...`);
+          printToolCall(tc.name, tc.arguments);
+        }
         const result = executeTool(tc.name, args);
-        printToolResult(result);
+        spinner.stop();
+        if (!options.quiet) printToolResult(result);
 
         messages.push({
           role: 'tool',
@@ -189,6 +221,7 @@ export async function runAgent(
         });
       }
     } catch (e) {
+      spinner.stop();
       if ((e as Error).message === 'Aborted') throw e;
       printError(`API Error: ${(e as Error).message}`);
       throw e;
