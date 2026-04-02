@@ -2,12 +2,17 @@ import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 
+export type EffortLevel = 'low' | 'medium' | 'high';
+export type PermissionMode = 'ask' | 'auto' | 'yolo';
+
 export interface Config {
   apiKey: string;
   model: string;
   baseUrl: string;
   knowledgeDir: string;
   maxTokens: number;
+  effort: EffortLevel;
+  permissionMode: PermissionMode;
 }
 
 const CONFIG_DIR = join(homedir(), '.bobo');
@@ -19,6 +24,8 @@ const DEFAULT_CONFIG: Config = {
   baseUrl: 'https://api.anthropic.com/v1',
   knowledgeDir: join(CONFIG_DIR, 'knowledge'),
   maxTokens: 4096,
+  effort: 'medium',
+  permissionMode: 'ask',
 };
 
 export function ensureConfigDir(): void {

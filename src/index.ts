@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { createInterface } from 'node:readline';
 import { readFileSync, existsSync, mkdirSync, copyFileSync, writeFileSync, readdirSync, statSync, cpSync } from 'node:fs';
 import { join } from 'node:path';
@@ -15,6 +15,9 @@ import {
   ensureConfigDir,
   getConfigDir,
   resolveKnowledgeDir,
+  saveConfig,
+  type EffortLevel,
+  type PermissionMode,
 } from './config.js';
 import { runAgent } from './agent.js';
 import { listKnowledgeFiles } from './knowledge.js';
@@ -30,7 +33,7 @@ import { registerStructuredTemplateCommand } from './structured-template-command
 import { saveSession, listSessions, loadSession, getRecentSession } from './sessions.js';
 import { generateInsight } from './insight.js';
 import { spawnSubAgent, listSubAgents, getSubAgent } from './sub-agents.js';
-import { enableStatusBar, disableStatusBar, setupResizeHandler } from './statusbar.js';
+import { enableStatusBar, disableStatusBar, updateStatusBar, setupResizeHandler } from './statusbar.js';
 import { slashCompleter } from './completer.js';
 import chalk from 'chalk';
 
@@ -48,12 +51,54 @@ program
   .description('🐕 Bobo CLI — Portable AI Engineering Assistant')
   .version(version)
   .argument('[prompt...]', 'Run a one-shot prompt without entering REPL')
-  .action(async (promptParts: string[]) => {
+  .addOption(new Option('-p, --print', 'Non-interactive mode: print response and exit (supports piped input)'))
+  .addOption(new Option('-c, --continue', 'Continue most recent conversation'))
+  .addOption(new Option('-r, --resume <session>', 'Resume a specific session by ID'))
+  .addOption(new Option('--model <model>', 'Override model for this session'))
+  .addOption(new Option('--effort <level>', 'Set effort level').choices(['low', 'medium', 'high']))
+  .addOption(new Option('--full-auto', 'Auto-approve all tool calls'))
+  .addOption(new Option('--yolo', 'No sandbox, no approvals (dangerous!)'))
+  .action(async (promptParts: string[], opts: {
+    print?: boolean;
+    continue?: boolean;
+    resume?: string;
+    model?: string;
+    effort?: string;
+    fullAuto?: boolean;
+    yolo?: boolean;
+  }) => {
     const prompt = promptParts.join(' ').trim();
+
+    // Determine permission mode
+    let permissionMode: PermissionMode = 'ask';
+    if (opts.fullAuto) permissionMode = 'auto';
+    if (opts.yolo) permissionMode = 'yolo';
+
+    // -p mode: non-interactive, supports piped input
+    if (opts.print) {
+      await runPrintMode(prompt, {
+        model: opts.model,
+        effort: opts.effort as EffortLevel | undefined,
+        permissionMode,
+      });
+      return;
+    }
+
+    // Interactive mode
     if (prompt) {
-      await runOneShot(prompt);
+      await runOneShot(prompt, {
+        model: opts.model,
+        effort: opts.effort as EffortLevel | undefined,
+        permissionMode,
+      });
     } else {
-      await runRepl();
+      await runRepl({
+        continueSession: opts.continue,
+        resumeId: opts.resume,
+        model: opts.model,
+        effort: opts.effort as EffortLevel | undefined,
+        permissionMode,
+      });
     }
   });
 
@@ -136,7 +181,7 @@ program
 
     initSkills();
 
-    // Copy bundled skills to ~/.bobo/skills/ (including scripts/ subdirs)
+    // Copy bundled skills (including scripts/ subdirs)
     const bundledSkillsDir = join(__dirname, '..', 'bundled-skills');
     const userSkillsDir = join(getConfigDir(), 'skills');
     if (existsSync(bundledSkillsDir)) {
@@ -151,13 +196,11 @@ program
           if (!statSync(src).isDirectory()) continue;
         } catch { continue; }
         if (!existsSync(dest)) {
-          // Use cpSync recursive — copies everything including scripts/
           cpSync(src, dest, { recursive: true });
           installed++;
         }
       }
       if (installed > 0) {
-        // All skills enabled by default — passive triggering based on context
         const manifestPath = join(getConfigDir(), 'skills-manifest.json');
         let manifest: Record<string, unknown> = {};
         try {
@@ -173,6 +216,23 @@ program
         writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
         printSuccess(`${installed} skills installed (all enabled, passive triggering)`);
       }
+    }
+
+    // Create BOBO.md template if not exists
+    const boboMdPath = join(process.cwd(), 'BOBO.md');
+    if (!existsSync(boboMdPath)) {
+      writeFileSync(boboMdPath, `# Project Instructions
+
+<!-- Bobo reads this file at the start of every session. -->
+<!-- Add coding standards, architecture decisions, and project-specific rules here. -->
+
+## Build & Test
+<!-- e.g.: npm run build, npm test -->
+
+## Style Guide
+<!-- e.g.: Use TypeScript strict mode, prefer const over let -->
+`);
+      printSuccess('Created BOBO.md (project instructions)');
     }
 
     printSuccess(`Initialized ${getConfigDir()}`);
@@ -211,7 +271,6 @@ program
       }
     }
 
-    // Check API key
     const config = loadConfig();
     if (config.apiKey) {
       printLine(`  ${chalk.green('✓')} ${'API Key'.padEnd(12)} ${chalk.dim('configured')}`);
@@ -220,7 +279,10 @@ program
       allGood = false;
     }
 
-    // Check skills directory
+    // Check BOBO.md
+    const boboMd = existsSync(join(process.cwd(), 'BOBO.md'));
+    printLine(`  ${boboMd ? chalk.green('✓') : chalk.yellow('○')} ${'BOBO.md'.padEnd(12)} ${boboMd ? chalk.dim('found') : chalk.yellow('not found — run: bobo init')}`);
+
     const skillsDir = join(getConfigDir(), 'skills');
     if (existsSync(skillsDir)) {
       const count = readdirSync(skillsDir).filter(f => {
@@ -240,7 +302,7 @@ program
     printLine();
   });
 
-// ─── Spawn subcommand (sub-agent) ────────────────────────────
+// ─── Spawn subcommand ────────────────────────────────────────
 
 program
   .command('spawn <task>')
@@ -303,7 +365,6 @@ agentsCmd
     printLine();
   });
 
-// Default agents action: list
 agentsCmd.action(() => {
   const agents = listSubAgents();
   if (agents.length === 0) {
@@ -339,46 +400,29 @@ program
 
 const skillCmd = program.command('skill').description('Manage skills');
 
-skillCmd
-  .command('list')
-  .description('List all skills')
-  .action(() => {
-    const skills = listSkills();
-    console.log(chalk.cyan.bold('\n🧩 Skills:\n'));
-    for (const s of skills) {
-      const icon = s.enabled ? '✅' : '❌';
-      const typeTag = s.type === 'builtin' ? chalk.dim('builtin') : chalk.green('custom');
-      console.log(`  ${icon} ${chalk.bold(s.name)} [${typeTag}] — ${s.description}`);
-    }
-    console.log();
-  });
+skillCmd.command('list').description('List all skills').action(() => {
+  const skills = listSkills();
+  console.log(chalk.cyan.bold('\n🧩 Skills:\n'));
+  for (const s of skills) {
+    const icon = s.enabled ? '✅' : '❌';
+    const typeTag = s.type === 'builtin' ? chalk.dim('builtin') : chalk.green('custom');
+    console.log(`  ${icon} ${chalk.bold(s.name)} [${typeTag}] — ${s.description}`);
+  }
+  console.log();
+});
 
-skillCmd
-  .command('enable <name>')
-  .description('Enable a skill')
-  .action((name: string) => {
-    const result = setSkillEnabled(name, true);
-    console.log(result);
-  });
+skillCmd.command('enable <name>').description('Enable a skill').action((name: string) => {
+  console.log(setSkillEnabled(name, true));
+});
 
-skillCmd
-  .command('disable <name>')
-  .description('Disable a skill')
-  .action((name: string) => {
-    const result = setSkillEnabled(name, false);
-    console.log(result);
-  });
+skillCmd.command('disable <name>').description('Disable a skill').action((name: string) => {
+  console.log(setSkillEnabled(name, false));
+});
 
-skillCmd
-  .command('import <path>')
-  .description('Batch import skills from an OpenClaw skills directory')
-  .action((path: string) => {
-    const resolved = path.startsWith('~')
-      ? join(process.env.HOME || '', path.slice(1))
-      : path;
-    const result = importSkills(resolved);
-    console.log(result);
-  });
+skillCmd.command('import <path>').description('Batch import skills').action((path: string) => {
+  const resolved = path.startsWith('~') ? join(process.env.HOME || '', path.slice(1)) : path;
+  console.log(importSkills(resolved));
+});
 
 // ─── Structured knowledge commands ──────────────────────────
 
@@ -390,20 +434,59 @@ registerStructuredTemplateCommand(program);
 // ─── Project subcommand ──────────────────────────────────────
 
 const projectCmd = program.command('project').description('Manage project configuration');
+projectCmd.command('init').description('Initialize .bobo/ project config').action(() => {
+  printSuccess(initProject());
+});
 
-projectCmd
-  .command('init')
-  .description('Initialize .bobo/ project config in current directory')
-  .action(() => {
-    const result = initProject();
-    printSuccess(result);
-  });
+// ─── Print mode (-p) ─────────────────────────────────────────
+
+interface ModeOptions {
+  model?: string;
+  effort?: EffortLevel;
+  permissionMode: PermissionMode;
+}
+
+async function runPrintMode(prompt: string, opts: ModeOptions): Promise<void> {
+  // Read piped stdin if available
+  let input = prompt;
+  if (!process.stdin.isTTY) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) {
+      chunks.push(chunk as Buffer);
+    }
+    const piped = Buffer.concat(chunks).toString('utf-8');
+    input = piped + (prompt ? `\n\n${prompt}` : '');
+  }
+
+  if (!input.trim()) {
+    printError('No input provided. Usage: bobo -p "query" or cat file | bobo -p "explain"');
+    process.exit(1);
+  }
+
+  try {
+    await runAgent(input, [], {
+      quiet: false,
+      model: opts.model,
+      effort: opts.effort,
+      permissionMode: opts.permissionMode,
+    });
+  } catch (e) {
+    if ((e as Error).message !== 'Aborted') {
+      printError((e as Error).message);
+      process.exit(1);
+    }
+  }
+}
 
 // ─── One-shot mode ───────────────────────────────────────────
 
-async function runOneShot(prompt: string): Promise<void> {
+async function runOneShot(prompt: string, opts: ModeOptions): Promise<void> {
   try {
-    await runAgent(prompt, []);
+    await runAgent(prompt, [], {
+      model: opts.model,
+      effort: opts.effort,
+      permissionMode: opts.permissionMode,
+    });
   } catch (e) {
     if ((e as Error).message !== 'Aborted') {
       printError((e as Error).message);
@@ -414,16 +497,27 @@ async function runOneShot(prompt: string): Promise<void> {
 
 // ─── REPL mode ───────────────────────────────────────────────
 
-async function runRepl(): Promise<void> {
+interface ReplOptions extends ModeOptions {
+  continueSession?: boolean;
+  resumeId?: string;
+}
+
+async function runRepl(opts: ReplOptions): Promise<void> {
   const config = loadConfig();
   const skills = listSkills();
   const knowledgeFiles = listKnowledgeFiles();
   const sessionStartTime = Date.now();
   const matchedSkills: string[] = [];
 
+  // Runtime overrides
+  let currentModel = opts.model || config.model;
+  let currentEffort: EffortLevel = opts.effort || config.effort;
+  let currentPermissionMode: PermissionMode = opts.permissionMode || config.permissionMode;
+  let sessionName = '';
+
   printWelcome({
     version,
-    model: config.model,
+    model: currentModel,
     toolCount: toolDefinitions.length,
     skillsActive: skills.filter(s => s.enabled).length,
     skillsTotal: skills.length,
@@ -431,39 +525,66 @@ async function runRepl(): Promise<void> {
     cwd: process.cwd(),
   });
 
+  // Check BOBO.md
+  const boboMdExists = existsSync(join(process.cwd(), 'BOBO.md'));
+  if (boboMdExists) {
+    printLine(chalk.dim('  📋 BOBO.md loaded'));
+  }
+
   if (!config.apiKey) {
     printWarning('API key not configured. Run: bobo config set apiKey <your-key>');
     printLine();
   }
 
-  // Check for resumable session
+  // Restore session
   let history: ChatCompletionMessageParam[] = [];
-  const recentSession = getRecentSession(3600000); // 1 hour
-  if (recentSession && recentSession.messages.length > 0) {
-    printLine(chalk.yellow(`💾 Found recent session (${recentSession.messageCount} messages, ${recentSession.firstUserMessage.slice(0, 50)}...)`));
-    printLine(chalk.dim('   Resume? (y/n)'));
 
-    // Quick y/n prompt
-    const answer = await new Promise<string>((resolve) => {
-      const tmpRl = createInterface({ input: process.stdin, output: process.stdout });
-      tmpRl.question(chalk.green('> '), (ans) => {
-        tmpRl.close();
-        resolve(ans.trim().toLowerCase());
+  if (opts.continueSession) {
+    // -c flag: continue most recent session
+    const recent = getRecentSession(86400000); // 24 hours
+    if (recent && recent.messages.length > 0) {
+      history = recent.messages;
+      printSuccess(`Continuing session (${history.length} messages, "${recent.firstUserMessage.slice(0, 40)}...")`);
+    } else {
+      printWarning('No recent session found.');
+    }
+  } else if (opts.resumeId) {
+    // -r flag: resume specific session
+    const session = loadSession(opts.resumeId);
+    if (session) {
+      history = session.messages;
+      printSuccess(`Resumed session ${opts.resumeId} (${history.length} messages)`);
+    } else {
+      printWarning(`Session not found: ${opts.resumeId}`);
+    }
+  } else {
+    // Auto-resume prompt
+    const recentSession = getRecentSession(3600000);
+    if (recentSession && recentSession.messages.length > 0) {
+      printLine(chalk.yellow(`💾 Found recent session (${recentSession.messageCount} messages, ${recentSession.firstUserMessage.slice(0, 50)}...)`));
+      printLine(chalk.dim('   Resume? (y/n)'));
+
+      const answer = await new Promise<string>((resolve) => {
+        const tmpRl = createInterface({ input: process.stdin, output: process.stdout });
+        tmpRl.question(chalk.green('> '), (ans) => {
+          tmpRl.close();
+          resolve(ans.trim().toLowerCase());
+        });
       });
-    });
 
-    if (answer === 'y' || answer === 'yes') {
-      history = recentSession.messages;
-      printSuccess(`Resumed session (${history.length} messages)`);
+      if (answer === 'y' || answer === 'yes') {
+        history = recentSession.messages;
+        printSuccess(`Resumed session (${history.length} messages)`);
+      }
     }
   }
 
-  // Enable bottom status bar (Claude Code style)
+  // Enable status bar
   if (process.stdout.isTTY) {
     setupResizeHandler();
     enableStatusBar({
-      model: config.model,
-      thinkingLevel: 'medium',
+      model: currentModel,
+      thinkingLevel: currentEffort,
       skillsCount: skills.filter(s => s.enabled).length,
       cwd: process.cwd(),
     });
@@ -477,8 +598,9 @@ async function runRepl(): Promise<void> {
   });
 
   let abortController: AbortController | null = null;
+  let lastResponse = '';
+  let autoCompactTriggered = false;
 
-  // Auto-save on exit
   const autoSave = () => {
     if (history.length > 0) {
       const id = saveSession(history, process.cwd());
@@ -515,6 +637,7 @@ async function runRepl(): Promise<void> {
       continue;
     }
 
+    // ─── Exit ───
     if (input === '/quit' || input === '/exit') {
       autoSave();
       disableStatusBar();
@@ -522,11 +645,138 @@ async function runRepl(): Promise<void> {
       process.exit(0);
     }
 
+    // ─── /new, /clear ───
     if (input === '/clear' || input === '/new') {
       history = [];
       matchedSkills.length = 0;
+      lastResponse = '';
+      autoCompactTriggered = false;
       resetPlan();
       printSuccess('Conversation cleared');
+      rl.prompt();
+      continue;
+    }
+
+    // ─── /model [name] ───
+    if (input.startsWith('/model')) {
+      const newModel = input.replace('/model', '').trim();
+      if (!newModel) {
+        printLine(chalk.cyan('Current model: ') + currentModel);
+        printLine(chalk.dim('Usage: /model <model-name>'));
+        printLine(chalk.dim('  Examples: claude-sonnet-4-20250514, gpt-4o, deepseek-chat'));
+      } else {
+        currentModel = newModel;
+        updateStatusBar({ model: currentModel });
+        printSuccess(`Model switched to: ${currentModel}`);
+      }
+      rl.prompt();
+      continue;
+    }
+
+    // ─── /effort [level] ───
+    if (input.startsWith('/effort')) {
+      const level = input.replace('/effort', '').trim().toLowerCase();
+      if (!level) {
+        printLine(chalk.cyan('Current effort: ') + currentEffort);
+        printLine(chalk.dim('  /effort low    — Quick, concise answers'));
+        printLine(chalk.dim('  /effort medium — Balanced (default)'));
+        printLine(chalk.dim('  /effort high   — Deep analysis, thorough'));
+      } else if (['low', 'medium', 'high'].includes(level)) {
+        currentEffort = level as EffortLevel;
+        updateStatusBar({ thinkingLevel: currentEffort });
+        printSuccess(`Effort level: ${currentEffort}`);
+      } else {
+        printError('Invalid effort level. Use: low, medium, high');
+      }
+      rl.prompt();
+      continue;
+    }
+
+    // ─── /copy [n] ───
+    if (input.startsWith('/copy')) {
+      const indexStr = input.replace('/copy', '').trim();
+      let textToCopy = lastResponse;
+
+      if (indexStr) {
+        const idx = parseInt(indexStr, 10);
+        const assistantMsgs = history.filter(m => m.role === 'assistant' && typeof m.content === 'string');
+        if (idx > 0 && idx <= assistantMsgs.length) {
+          textToCopy = (assistantMsgs[assistantMsgs.length - idx] as { content: string }).content;
+        }
+      }
+
+      if (!textToCopy) {
+        printWarning('Nothing to copy.');
+      } else {
+        // Try platform clipboard
+        try {
+          const clipCmd = process.platform === 'darwin' ? 'pbcopy'
+            : process.platform === 'win32' ? 'clip'
+            : 'xclip -selection clipboard';
+          execSync(clipCmd, { input: textToCopy, timeout: 3000 });
+          printSuccess('Copied to clipboard!');
+        } catch {
+          // Fallback: write to file
+          const copyPath = join(getConfigDir(), 'last-copy.txt');
+          writeFileSync(copyPath, textToCopy);
+          printWarning(`Clipboard unavailable. Saved to ${copyPath}`);
+        }
+      }
+      rl.prompt();
+      continue;
+    }
+
+    // ─── /context ───
+    if (input === '/context') {
+      const msgCount = history.length;
+      let totalChars = 0;
+      let toolResultChars = 0;
+      const roleCounts: Record<string, number> = {};
+
+      for (const msg of history) {
+        const content = typeof msg.content === 'string' ? msg.content : '';
+        totalChars += content.length;
+        roleCounts[msg.role] = (roleCounts[msg.role] || 0) + 1;
+        if (msg.role === 'tool') toolResultChars += content.length;
+      }
+
+      const estTokens = Math.ceil(totalChars / 3.5);
+      const maxContext = 200000; // approximate
+      const usage = (estTokens / maxContext * 100).toFixed(1);
+
+      printLine(chalk.cyan.bold('\n📊 Context Analysis\n'));
+      printLine(`  Messages:     ${msgCount}`);
+      printLine(`  Est. Tokens:  ~${estTokens.toLocaleString()} / ${maxContext.toLocaleString()} (${usage}%)`);
+      printLine('');
+      for (const [role, count] of Object.entries(roleCounts)) {
+        printLine(`  ${role.padEnd(12)} ${count} messages`);
+      }
+
+      if (toolResultChars > totalChars * 0.6) {
+        printLine(chalk.yellow('\n  ⚠ Tool results are >60% of context. Consider /compact to free space.'));
+      }
+      if (estTokens > maxContext * 0.75) {
+        printLine(chalk.red('\n  🔴 Context usage >75%. Run /compact soon!'));
+      } else if (estTokens > maxContext * 0.5) {
+        printLine(chalk.yellow('\n  🟡 Context usage >50%. Keep an eye on it.'));
+      } else {
+        printLine(chalk.green('\n  🟢 Context usage healthy.'));
+      }
+      printLine();
+      rl.prompt();
+      continue;
+    }
+
+    // ─── /rename <name> ───
+    if (input.startsWith('/rename')) {
+      const name = input.replace('/rename', '').trim();
+      if (!name) {
+        printLine(chalk.dim(`Current name: ${sessionName || '(unnamed)'}`));
+        printLine(chalk.dim('Usage: /rename <name>'));
+      } else {
+        sessionName = name;
+        printSuccess(`Session renamed: ${sessionName}`);
+      }
       rl.prompt();
       continue;
     }
@@ -582,11 +832,11 @@ async function runRepl(): Promise<void> {
       continue;
     }
 
-    // ─── /agents or /bg ───
+    // ─── /agents, /bg ───
     if (input === '/agents' || input === '/bg') {
       const agents = listSubAgents(10);
       if (agents.length === 0) {
-        printLine(chalk.dim('No sub-agents. Use: bobo spawn "task" or type: /spawn <task>'));
+        printLine(chalk.dim('No sub-agents. Use: /spawn <task>'));
       } else {
         printLine(chalk.cyan.bold('\n🤖 Sub-Agents:\n'));
         for (const a of agents) {
@@ -600,7 +850,6 @@ async function runRepl(): Promise<void> {
       continue;
     }
 
-    // ─── /agents show <id> ───
     if (input.startsWith('/agents show ')) {
       const id = input.replace('/agents show ', '').trim();
       const agent = getSubAgent(id);
@@ -617,7 +866,6 @@ async function runRepl(): Promise<void> {
       continue;
     }
 
-    // ─── /spawn <task> ───
     if (input.startsWith('/spawn ')) {
       const task = input.replace('/spawn ', '').trim();
       if (!task) {
@@ -634,6 +882,7 @@ async function runRepl(): Promise<void> {
       continue;
     }
 
+    // ─── /compact ───
     if (input === '/compact') {
       const userCount = history.filter(m => m.role === 'user').length;
       if (userCount > 4) {
@@ -646,12 +895,13 @@ async function runRepl(): Promise<void> {
             '6. All user messages 7. Pending tasks 8. Current work state 9. Next steps (with citations). ' +
             'Output the summary directly, do not call any tools.',
             history,
-            { signal: abortController.signal },
+            { signal: abortController.signal, model: currentModel, effort: currentEffort },
           );
           history = [
             { role: 'user', content: 'Below is a compressed summary of our prior conversation. Continue from here.' },
             { role: 'assistant', content: compactResult.response },
           ];
+          autoCompactTriggered = false;
           printSuccess('Context compacted (nine-section summary)');
         } catch (e) {
           if ((e as Error).message !== 'Aborted') {
@@ -667,13 +917,14 @@ async function runRepl(): Promise<void> {
       continue;
     }
 
+    // ─── /dream ───
     if (input === '/dream') {
       abortController = new AbortController();
       try {
         const result = await runAgent(
           'Perform memory consolidation: scan recent memories and conversations, extract recurring patterns and promote to long-term memory, merge redundant entries, clean up completed tasks. Use search_memory and save_memory tools. Report what you consolidated.',
           history,
-          { signal: abortController.signal },
+          { signal: abortController.signal, model: currentModel },
         );
         history = result.history;
       } catch (e) {
@@ -685,14 +936,17 @@ async function runRepl(): Promise<void> {
       continue;
     }
 
+    // ─── /status ───
     if (input === '/status') {
-      const cfg = loadConfig();
       const turns = history.filter(m => m.role === 'user').length;
       printLine(chalk.cyan('📊 Session Status:'));
-      printLine(`  Model:    ${cfg.model}`);
-      printLine(`  Turns:    ${turns}`);
-      printLine(`  Messages: ${history.length}`);
-      printLine(`  CWD:      ${process.cwd()}`);
+      printLine(`  Model:      ${currentModel}`);
+      printLine(`  Effort:     ${currentEffort}`);
+      printLine(`  Permission: ${currentPermissionMode}`);
+      printLine(`  Turns:      ${turns}`);
+      printLine(`  Messages:   ${history.length}`);
+      printLine(`  CWD:        ${process.cwd()}`);
+      if (sessionName) printLine(`  Name:       ${sessionName}`);
       rl.prompt();
       continue;
     }
@@ -723,42 +977,67 @@ async function runRepl(): Promise<void> {
       continue;
     }
 
+    // ─── /help ───
     if (input === '/help') {
       printLine(chalk.cyan.bold('Commands:'));
       printLine('');
       printLine(chalk.dim('  Session'));
-      printLine('  /new       — Start new conversation');
-      printLine('  /clear     — Clear conversation history');
-      printLine('  /compact   — Compress context (nine-section)');
-      printLine('  /resume    — Restore a previous session');
-      printLine('  /quit      — Exit');
+      printLine('  /new         Start new conversation');
+      printLine('  /clear       Clear conversation history');
+      printLine('  /compact     Compress context (nine-section)');
+      printLine('  /resume      Restore a previous session');
+      printLine('  /rename <n>  Rename current session');
+      printLine('  /quit        Exit');
+      printLine('');
+      printLine(chalk.dim('  Model & Effort'));
+      printLine('  /model <n>   Switch model');
+      printLine('  /effort <l>  Set thinking effort (low/medium/high)');
       printLine('');
       printLine(chalk.dim('  Analysis'));
-      printLine('  /insight   — Session analytics (tokens, tools, skills)');
-      printLine('  /status    — Session status');
-      printLine('  /plan      — Show current task plan');
+      printLine('  /insight     Session analytics (tokens, tools, skills)');
+      printLine('  /context     Context usage analysis');
+      printLine('  /status      Session status');
+      printLine('  /copy [n]    Copy last response to clipboard');
+      printLine('  /plan        Show current task plan');
       printLine('');
       printLine(chalk.dim('  Sub-Agents'));
-      printLine('  /spawn <task> — Run a task in background sub-agent');
-      printLine('  /agents       — List sub-agents');
-      printLine('  /agents show <id> — Show sub-agent result');
+      printLine('  /spawn <t>   Run task in background sub-agent');
+      printLine('  /agents      List sub-agents');
+      printLine('  /agents show <id>  Show sub-agent result');
       printLine('');
       printLine(chalk.dim('  Knowledge'));
-      printLine('  /knowledge — List knowledge files');
-      printLine('  /skills    — List skills');
-      printLine('  /dream     — Memory consolidation');
-      printLine('  /help      — Show this help');
+      printLine('  /knowledge   List knowledge files');
+      printLine('  /skills      List skills');
+      printLine('  /dream       Memory consolidation');
+      printLine('');
+      printLine(chalk.dim('  CLI Flags'));
+      printLine('  bobo -p "q"  Non-interactive (supports piping)');
+      printLine('  bobo -c      Continue last conversation');
+      printLine('  bobo -r <id> Resume specific session');
+      printLine('  bobo --full-auto  Auto-approve tool calls');
+      printLine('  bobo --yolo  No sandbox, no approvals');
       rl.prompt();
       continue;
     }
 
+    // ─── Run agent ───
     abortController = new AbortController();
     try {
       const result = await runAgent(input, history, {
         signal: abortController.signal,
         matchedSkills,
+        model: currentModel,
+        effort: currentEffort,
+        permissionMode: currentPermissionMode,
+        onAutoCompact: () => {
+          if (!autoCompactTriggered) {
+            autoCompactTriggered = true;
+            printLine(chalk.yellow('\n⚠ Context is getting large. Consider running /compact to free space.\n'));
+          }
+        },
       });
       history = result.history;
+      lastResponse = result.response;
     } catch (e) {
       if ((e as Error).message !== 'Aborted') {
         printError((e as Error).message);

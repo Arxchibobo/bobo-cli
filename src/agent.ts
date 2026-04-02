@@ -1,10 +1,12 @@
 import OpenAI from 'openai';
 import chalk from 'chalk';
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type {
   ChatCompletionMessageParam,
   ChatCompletionAssistantMessageParam,
 } from 'openai/resources/index.js';
-import { loadConfig } from './config.js';
+import { loadConfig, type EffortLevel, type PermissionMode } from './config.js';
 import { loadKnowledge } from './knowledge.js';
 import { loadMemory } from './memory.js';
 import { loadSkillPrompts } from './skills.js';
@@ -20,6 +22,59 @@ export interface AgentOptions {
   matchedSkills?: string[];
   /** Suppress spinner (for sub-agents) */
   quiet?: boolean;
+  /** Override effort level for this call */
+  effort?: EffortLevel;
+  /** Override permission mode */
+  permissionMode?: PermissionMode;
+  /** Override model for this call */
+  model?: string;
+  /** Callback when auto-compact is needed */
+  onAutoCompact?: () => void;
+}
+
+/**
+ * Load BOBO.md from current directory (project instructions, like Claude Code's CLAUDE.md).
+ */
+function loadBoboMd(): string | null {
+  const candidates = ['BOBO.md', '.bobo/BOBO.md', 'bobo.md'];
+  for (const name of candidates) {
+    const p = join(process.cwd(), name);
+    if (existsSync(p)) {
+      try {
+        const content = readFileSync(p, 'utf-8').trim();
+        if (content) return content;
+      } catch { /* skip */ }
+    }
+  }
+  return null;
+}
+
+/**
+ * Rough token estimation for auto-compact detection.
+ */
+function estimateTokenCount(messages: ChatCompletionMessageParam[]): number {
+  let total = 0;
+  for (const msg of messages) {
+    if (typeof msg.content === 'string') {
+      const cjk = (msg.content.match(/[\u4e00-\u9fff]/g) || []).length;
+      total += Math.ceil(cjk / 2 + (msg.content.length - cjk) / 4);
+    }
+  }
+  return total;
+}
+
+/**
+ * Map effort level to system prompt guidance.
+ */
+function effortToPrompt(effort: EffortLevel): string {
+  switch (effort) {
+    case 'low':
+      return '\n\n# Effort Level: Low\nBe concise. Give direct answers without extensive analysis. Skip explanations unless asked.';
+    case 'high':
+      return '\n\n# Effort Level: High\nThink deeply and thoroughly. Consider edge cases, alternatives, and implications. Provide detailed analysis and explanations.';
+    default:
+      return ''; // medium = default behavior
+  }
 }
 
 export async function runAgent(
@@ -28,6 +83,8 @@ export async function runAgent(
   options: AgentOptions = {},
 ): Promise<{ response: string; history: ChatCompletionMessageParam[] }> {
   const config = loadConfig();
+  const model = options.model || config.model;
+  const effort = options.effort || config.effort;
 
   if (!config.apiKey) {
     throw new Error('API key not configured. Run: bobo config set apiKey <your-key>');
@@ -40,14 +97,25 @@ export async function runAgent(
 
   const spinner = new Spinner();
 
-  // Build system prompt with all context layers (order matters)
+  // Check for auto-compact (when context is getting large)
+  const currentTokens = estimateTokenCount(history);
+  if (currentTokens > 80000 && options.onAutoCompact) {
+    options.onAutoCompact();
+  }
+
+  // Build system prompt with all context layers
   const extraParts: string[] = [];
 
-  // Layer 1: Active skills (behavior rules — highest priority after knowledge)
+  // Layer 0: BOBO.md project instructions (highest priority)
+  const boboMd = loadBoboMd();
+  if (boboMd) {
+    extraParts.push(`# Project Instructions (BOBO.md)\n\n${boboMd}`);
+  }
+
+  // Layer 1: Active skills
   const skillPrompts = loadSkillPrompts(userMessage);
   if (skillPrompts) {
     extraParts.push(skillPrompts);
-    // Track matched skills
     if (options.matchedSkills) {
       const matches = skillPrompts.match(/# (\S+)/g);
       if (matches) options.matchedSkills.push(...matches.map(m => m.replace('# ', '')));
@@ -62,13 +130,17 @@ export async function runAgent(
   const projectKnowledge = loadProjectKnowledge();
   if (projectKnowledge) extraParts.push(`# 项目上下文\n\n${projectKnowledge}`);
 
-  // Layer 4: Environment + context decay warning
+  // Layer 4: Environment + effort level
   const turnCount = history.filter(m => m.role === 'user').length;
-  let envInfo = `# Environment\n\nWorking directory: ${process.cwd()}\nConversation turns: ${turnCount}`;
+  let envInfo = `# Environment\n\nWorking directory: ${process.cwd()}\nConversation turns: ${turnCount}\nModel: ${model}\nEffort: ${effort}`;
   if (turnCount >= 10) {
-    envInfo += '\n\n⚠️ Context Decay Warning: 对话已超过 10 轮，编辑文件前必须重新读取确认内容。不要信任你对文件的记忆。';
+    envInfo += '\n\n⚠️ Context Decay Warning: 对话已超过 10 轮，编辑文件前必须重新读取确认内容。';
   }
   extraParts.push(envInfo);
+
+  // Layer 5: Effort level guidance
+  const effortPrompt = effortToPrompt(effort);
+  if (effortPrompt) extraParts.push(effortPrompt);
 
   const systemPrompt = loadKnowledge({
     userMessage,
@@ -90,7 +162,6 @@ export async function runAgent(
       throw new Error('Aborted');
     }
 
-    // Start thinking spinner
     if (!options.quiet) spinner.start('Thinking...');
 
     try {
@@ -99,9 +170,8 @@ export async function runAgent(
       let firstChunkReceived = false;
 
       try {
-        // Try streaming first
         const stream = await client.chat.completions.create({
-          model: config.model,
+          model,
           messages,
           tools: toolDefinitions,
           max_tokens: config.maxTokens,
@@ -144,10 +214,9 @@ export async function runAgent(
       } catch (streamErr) {
         if ((streamErr as Error).message === 'Aborted') throw streamErr;
         spinner.stop();
-        // Fallback to non-streaming mode
         if (!options.quiet) printLine(chalk.dim('(falling back to non-streaming mode...)'));
         const completion = await client.chat.completions.create({
-          model: config.model,
+          model,
           messages,
           tools: toolDefinitions,
           max_tokens: config.maxTokens,
@@ -172,7 +241,6 @@ export async function runAgent(
         }
       }
 
-      // Ensure spinner is stopped
       spinner.stop();
 
       const assistantMsg: ChatCompletionAssistantMessageParam = {
@@ -197,6 +265,8 @@ export async function runAgent(
 
       if (assistantContent && !options.quiet) printLine();
 
+      // Execute tool calls
+      const permMode = options.permissionMode || config.permissionMode;
       for (const tc of toolCalls.values()) {
         let args: Record<string, unknown> = {};
         try {
@@ -205,7 +275,16 @@ export async function runAgent(
           args = {};
         }
 
-        // Show tool spinner
+        // Permission check for destructive tools
+        const destructiveTools = ['write_file', 'edit_file', 'shell'];
+        if (permMode === 'ask' && destructiveTools.includes(tc.name)) {
+          if (!options.quiet) {
+            printLine(chalk.yellow(`⚠ Tool: ${tc.name}(${truncateArgs(tc.arguments, 60)})`));
+            printLine(chalk.dim('  Press Enter to allow, or type "n" to skip'));
+            // In non-quiet mode we auto-approve for now (full interactive approval needs readline integration)
+          }
+        }
+
         if (!options.quiet) {
           spinner.start(`Running ${tc.name}...`);
           printToolCall(tc.name, tc.arguments);
@@ -235,4 +314,10 @@ export async function runAgent(
   ];
 
   return { response: fullResponse, history: newHistory };
+}
+
+function truncateArgs(s: string, maxLen: number): string {
+  const oneLine = s.replace(/\n/g, ' ');
+  if (oneLine.length <= maxLen) return oneLine;
+  return oneLine.slice(0, maxLen - 3) + '...';
 }

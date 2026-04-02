@@ -14,20 +14,24 @@ const COMMANDS: CommandDef[] = [
   { name: '/compact', description: 'Compress context (nine-section)' },
   { name: '/resume', description: 'Restore a previous session' },
   { name: '/insight', description: 'Session analytics' },
+  { name: '/context', description: 'Context usage analysis' },
   { name: '/status', description: 'Session status' },
+  { name: '/model', description: 'Switch model' },
+  { name: '/effort', description: 'Set thinking effort (low/medium/high)' },
   { name: '/plan', description: 'Show current task plan' },
   { name: '/spawn', description: 'Run task in background sub-agent' },
   { name: '/agents', description: 'List sub-agents' },
+  { name: '/copy', description: 'Copy last response to clipboard' },
   { name: '/knowledge', description: 'List knowledge files' },
   { name: '/skills', description: 'List skills' },
   { name: '/dream', description: 'Memory consolidation' },
+  { name: '/rename', description: 'Rename current session' },
   { name: '/quit', description: 'Exit' },
   { name: '/exit', description: 'Exit' },
 ];
 
 /**
  * Readline completer function.
- * When user types `/` + partial, suggest matching commands.
  */
 export function slashCompleter(line: string): [string[], string] {
   if (!line.startsWith('/')) {
