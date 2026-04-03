@@ -31,7 +31,11 @@ import { initMcpServers, shutdownMcpServers, getMcpStatus } from './mcp-client.j
 import { startWatch } from './watcher.js';
 import { runAutonomous } from './autonomous.js';
 import { runTeamWorkflow, runPlanWorkflow, runVerifyWorkflow, runInterviewWorkflow, runAskWorkflow } from './workflows/index.js';
-import { getAllAgentRoles } from './agents/catalog.js';
+import { getAllAgentRoles, getAgentsByLane, AGENT_CATALOG } from './agents/catalog.js';
+import { listSpawnableRoles } from './agents/spawn.js';
+import { recoverContext, buildRecoveryPrompt } from './state/recovery.js';
+import { readProjectMemory, addMemoryEntry, queryMemory, appendNotepad, readNotepad } from './state/project-memory.js';
+import { renderStatusPanel, type HUDState } from './ui/hud.js';
 import type { EffortLevel } from './config.js';
 
 /**
@@ -585,4 +589,106 @@ Keep changes minimal and focused. Do not break existing functionality.`;
   projectCmd.command('init').description('Initialize .bobo/ project config').action(() => {
     printSuccess(initProject());
   });
+
+  // ─── Memory subcommand ───────────────────────────────────────
+  const memCmd = program.command('memory').description('Project-level memory');
+
+  memCmd.command('list')
+    .description('List project memory entries')
+    .option('--category <cat>', 'Filter by category')
+    .option('--keyword <kw>', 'Search keyword')
+    .action((opts: { category?: string; keyword?: string }) => {
+      const entries = queryMemory(opts.category, opts.keyword);
+      if (entries.length === 0) {
+        printLine(chalk.dim('No memory entries. Add with: bobo memory add <key> <value>'));
+        return;
+      }
+      printLine(chalk.cyan.bold('\n📝 Project Memory:\n'));
+      for (const e of entries) {
+        printLine(`  ${chalk.bold(e.key)} [${chalk.dim(e.category)}]`);
+        printLine(`    ${e.value}`);
+      }
+      printLine();
+    });
+
+  memCmd.command('add <key> <value>')
+    .description('Add or update a memory entry')
+    .option('--category <cat>', 'Category: architecture|decision|convention|gotcha|todo', 'convention')
+    .action((key: string, value: string, opts: { category?: string }) => {
+      addMemoryEntry({ key, value, category: (opts.category || 'convention') as never });
+      printSuccess(`Memory: ${key} = ${value}`);
+    });
+
+  memCmd.action(() => {
+    const entries = queryMemory();
+    if (entries.length === 0) {
+      printLine(chalk.dim('No memory entries. Add with: bobo memory add <key> <value>'));
+      return;
+    }
+    printLine(chalk.cyan.bold('\n📝 Project Memory:\n'));
+    for (const e of entries) {
+      printLine(`  ${chalk.bold(e.key)} [${chalk.dim(e.category)}] — ${e.value.slice(0, 80)}`);
+    }
+    printLine();
+  });
+
+  // ─── Notepad subcommand ──────────────────────────────────────
+  program
+    .command('note <text>')
+    .description('Quick note to .bobo/notepad.md')
+    .action((text: string) => {
+      appendNotepad(text);
+      printSuccess('Note saved.');
+    });
+
+  program
+    .command('notes')
+    .description('Show notepad')
+    .action(() => {
+      const content = readNotepad();
+      if (!content.trim()) {
+        printLine(chalk.dim('Notepad empty. Add with: bobo note "text"'));
+        return;
+      }
+      printLine(content);
+    });
+
+  // ─── Status subcommand ───────────────────────────────────────
+  program
+    .command('status')
+    .description('Show current status: agents, workflows, recovery context')
+    .action(() => {
+      const recovery = recoverContext();
+      const state: HUDState = {
+        sessionId: recovery.lastSession?.sessionId ?? 'none',
+        model: recovery.lastSession?.model ?? 'unknown',
+        effort: recovery.lastSession?.effort ?? 'high',
+        activeAgents: [],
+        completedTasks: 0,
+        totalTasks: 0,
+        tokenUsage: recovery.lastSession?.tokenUsage ?? { input: 0, output: 0 },
+      };
+      printLine(renderStatusPanel(state));
+      if (recovery.activeWorkflows.length > 0) {
+        printLine(`\n${chalk.yellow('Active workflows:')} ${recovery.activeWorkflows.length}`);
+      }
+      printLine(`\n${chalk.dim(recovery.summary)}`);
+    });
+
+  // ─── Catalog subcommand ──────────────────────────────────────
+  program
+    .command('catalog')
+    .description('Show agent catalog (roles and capabilities)')
+    .action(() => {
+      const lanes = getAgentsByLane();
+      printLine(chalk.cyan.bold('\n🤖 Agent Catalog:\n'));
+      for (const [lane, roles] of Object.entries(lanes)) {
+        printLine(chalk.bold(`  ${lane.toUpperCase()} Lane:`));
+        for (const role of roles) {
+          const agent = AGENT_CATALOG[role];
+          printLine(`    ${chalk.cyan(role.padEnd(12))} ${chalk.dim(agent.model.padEnd(8))} ${agent.description}`);
+        }
+      }
+      printLine();
+    });
 }
