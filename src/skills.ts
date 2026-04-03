@@ -179,6 +179,7 @@ export function setSkillEnabled(name: string, enabled: boolean): string {
  * Custom skills use passive triggering: only injected when the user message
  * matches the skill name or description keywords.
  * Pass userMessage to enable passive triggering; omit to load all enabled.
+ * @deprecated Use skill-router.ts routeMessage + loadMatchedSkillPrompts instead
  */
 export function loadSkillPrompts(userMessage?: string): string {
   const manifest = loadManifest();

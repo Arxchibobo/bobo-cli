@@ -25,6 +25,8 @@ const COMMANDS: CommandDef[] = [
   { name: '/knowledge', description: 'List knowledge files' },
   { name: '/skills', description: 'List skills' },
   { name: '/dream', description: 'Memory consolidation' },
+  { name: '/verify', description: 'Run verification agent' },
+  { name: '/history', description: 'Show conversation turns' },
   { name: '/mcp', description: 'MCP server status' },
   { name: '/bg', description: 'Background processes' },
   { name: '/cost', description: 'API cost tracker' },

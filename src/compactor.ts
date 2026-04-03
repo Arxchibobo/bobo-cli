@@ -22,19 +22,25 @@ const CIRCUIT_BREAKER_LIMIT = 3;   // Max consecutive failures before stopping
 let consecutiveCompactFailures = 0;
 
 /**
+ * Estimate token count for a text string.
+ */
+export function estimateTokensForText(text: string): number {
+  let cjk = 0, latin = 0;
+  for (const char of text) {
+    if (char.charCodeAt(0) > 0x2E80) cjk++;
+    else latin++;
+  }
+  return Math.ceil(cjk * TOKEN_PER_CHAR_ZH + latin * TOKEN_PER_CHAR_EN);
+}
+
+/**
  * Estimate token count for a message array.
  */
 export function estimateTokens(messages: ChatCompletionMessageParam[]): number {
   let total = 0;
   for (const msg of messages) {
     const text = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-    // Heuristic: count CJK vs Latin chars
-    let cjk = 0, latin = 0;
-    for (const char of text) {
-      if (char.charCodeAt(0) > 0x2E80) cjk++;
-      else latin++;
-    }
-    total += Math.ceil(cjk * TOKEN_PER_CHAR_ZH + latin * TOKEN_PER_CHAR_EN);
+    total += estimateTokensForText(text);
     total += 4; // message overhead
   }
   return total;

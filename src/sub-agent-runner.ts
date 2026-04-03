@@ -35,6 +35,15 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Set 30-minute timeout
+  const timeoutMs = 30 * 60 * 1000;
+  const timeoutHandle = setTimeout(() => {
+    taskData.status = 'failed';
+    taskData.error = 'Timeout: exceeded 30 minute limit';
+    writeFileSync(taskFile, JSON.stringify(taskData, null, 2));
+    process.exit(1);
+  }, timeoutMs);
+
   // Change to task's cwd
   try {
     process.chdir(taskData.cwd);
@@ -60,6 +69,8 @@ async function main(): Promise<void> {
   } catch (e) {
     taskData.status = 'failed';
     taskData.error = (e as Error).message;
+  } finally {
+    clearTimeout(timeoutHandle);
   }
 
   writeFileSync(taskFile, JSON.stringify(taskData, null, 2));

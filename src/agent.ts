@@ -9,7 +9,6 @@ import type {
 import { loadConfig, type EffortLevel, type PermissionMode } from './config.js';
 import { loadKnowledge } from './knowledge.js';
 import { loadMemory } from './memory.js';
-import { loadSkillPrompts } from './skills.js';
 import { routeMessage, loadMatchedSkillPrompts, buildRouteIndex } from './skill-router.js';
 import { loadProjectKnowledge } from './project.js';
 import { isClaudeCodeAvailable } from './tools/claude-code.js';
@@ -20,6 +19,8 @@ import { getMcpToolDefinitions, executeMcpTool, isMcpTool } from './mcp-client.j
 import { printStreaming, printToolCall, printToolResult, printError, printLine } from './ui.js';
 import { recordUsage, getStats } from './cost-tracker.js';
 import { Spinner } from './spinner.js';
+import { estimateTokens } from './compactor.js';
+import { executeToolWithGovernance, getToolMetadata } from './tool-governance.js';
 
 export interface AgentOptions {
   onText?: (text: string) => void;
@@ -55,19 +56,6 @@ function loadBoboMd(): string | null {
   return null;
 }
 
-/**
- * Rough token estimation for auto-compact detection.
- */
-function estimateTokenCount(messages: ChatCompletionMessageParam[]): number {
-  let total = 0;
-  for (const msg of messages) {
-    if (typeof msg.content === 'string') {
-      const cjk = (msg.content.match(/[\u4e00-\u9fff]/g) || []).length;
-      total += Math.ceil(cjk / 2 + (msg.content.length - cjk) / 4);
-    }
-  }
-  return total;
-}
 
 /**
  * Map effort level to system prompt guidance.
@@ -105,7 +93,7 @@ export async function runAgent(
   const spinner = new Spinner();
 
   // Check for auto-compact (when context is getting large)
-  const currentTokens = estimateTokenCount(history);
+  const currentTokens = estimateTokens(history);
   if (currentTokens > 80000 && options.onAutoCompact) {
     options.onAutoCompact();
   }
@@ -133,10 +121,8 @@ export async function runAgent(
   // Layer 1: Skill routing (varies per message, but definitions are static)
   const skillMatches = routeMessage(userMessage);
   const { prompt: routedSkillPrompts, loaded: loadedSkills } = loadMatchedSkillPrompts(skillMatches);
-  const legacySkillPrompts = loadSkillPrompts(userMessage);
-  const combinedSkillPrompts = [routedSkillPrompts, legacySkillPrompts].filter(Boolean).join('\n\n');
-  if (combinedSkillPrompts) {
-    staticParts.push(combinedSkillPrompts);
+  if (routedSkillPrompts) {
+    staticParts.push(routedSkillPrompts);
     if (options.matchedSkills) {
       options.matchedSkills.push(...loadedSkills);
     }
@@ -330,18 +316,40 @@ export async function runAgent(
         }
 
         // Route to MCP, advanced, browser, or built-in tool
+        // MCP and browser tools bypass governance (they have own security)
         let result: string;
         if (isMcpTool(tc.name)) {
           result = await executeMcpTool(tc.name, args);
-        } else if (isAdvancedTool(tc.name)) {
-          result = await executeAdvancedTool(tc.name, args);
+          spinner.stop();
+          if (!options.quiet) printToolResult(result);
         } else if (isBrowserTool(tc.name)) {
           result = await executeBrowserTool(tc.name, args);
+          spinner.stop();
+          if (!options.quiet) printToolResult(result);
         } else {
-          result = executeTool(tc.name, args);
+          // Built-in and advanced tools go through governance pipeline
+          const govResult = await executeToolWithGovernance(
+            tc.name,
+            args,
+            async (name, params) => {
+              if (isAdvancedTool(name)) {
+                return await executeAdvancedTool(name, params);
+              } else {
+                return executeTool(name, params);
+              }
+            }
+          );
+          spinner.stop();
+
+          if (govResult.blocked) {
+            result = `⛔ Tool blocked: ${govResult.blockReason || govResult.error}`;
+          } else if (!govResult.success) {
+            result = `❌ Tool failed: ${govResult.error}`;
+          } else {
+            result = govResult.output || '';
+          }
+          if (!options.quiet) printToolResult(result);
         }
-        spinner.stop();
-        if (!options.quiet) printToolResult(result);
 
         messages.push({
           role: 'tool',

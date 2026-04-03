@@ -4,6 +4,7 @@
 
 import chalk from 'chalk';
 import type { ChatCompletionMessageParam } from 'openai/resources/index.js';
+import { estimateTokensForText } from './compactor.js';
 
 interface InsightStats {
   duration: string;
@@ -14,15 +15,6 @@ interface InsightStats {
   estimatedTokens: number;
   toolCalls: Record<string, number>;
   matchedSkills: string[];
-}
-
-/**
- * Rough token estimation: ~4 chars/token for English, ~2 for Chinese.
- */
-function estimateTokens(text: string): number {
-  const cjkChars = (text.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) || []).length;
-  const otherChars = text.length - cjkChars;
-  return Math.ceil(cjkChars / 2 + otherChars / 4);
 }
 
 export function generateInsight(
@@ -44,10 +36,10 @@ export function generateInsight(
   for (const msg of history) {
     if (msg.role === 'user') {
       userCount++;
-      if (typeof msg.content === 'string') totalTokens += estimateTokens(msg.content);
+      if (typeof msg.content === 'string') totalTokens += estimateTokensForText(msg.content);
     } else if (msg.role === 'assistant') {
       assistantCount++;
-      if (typeof msg.content === 'string') totalTokens += estimateTokens(msg.content);
+      if (typeof msg.content === 'string') totalTokens += estimateTokensForText(msg.content);
       // Count tool calls
       const assistantMsg = msg as { tool_calls?: Array<{ function: { name: string } }> };
       if (assistantMsg.tool_calls) {
@@ -58,7 +50,7 @@ export function generateInsight(
       }
     } else if (msg.role === 'tool') {
       toolCount++;
-      if (typeof msg.content === 'string') totalTokens += estimateTokens(msg.content);
+      if (typeof msg.content === 'string') totalTokens += estimateTokensForText(msg.content);
     }
   }
 
