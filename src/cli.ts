@@ -361,7 +361,7 @@ export function registerCommands(program: Command): void {
   // ─── Workflow commands ──────────────────────────────────────
   program
     .command('team <spec> <task>')
-    .description('Run a team workflow, e.g. bobo team 3:executor "build REST API"')
+    .description('Run a team workflow with multiple agents, e.g. bobo team 3:executor "build REST API"')
     .action(async (spec: string, task: string) => {
       const [countRaw, roleRaw] = spec.split(':');
       const teamSize = Number.parseInt(countRaw, 10);
@@ -378,44 +378,64 @@ export function registerCommands(program: Command): void {
       printSuccess(result.summary);
       printLine(`Plan: ${result.planPath}`);
       printLine(`PRD: ${result.prdPath}`);
-      printLine(`Artifact: ${result.teamPath}`);
+      printLine(`Team report: ${result.teamPath}`);
+      if (result.agentIds.length > 0) {
+        printLine(chalk.dim(`Spawned ${result.agentIds.length} agents. Check status: bobo agents`));
+      }
     });
 
   program
     .command('plan <task>')
-    .description('Create a structured execution plan')
+    .description('Generate a structured execution plan using planner agent')
     .action(async (task: string) => {
       const result = await runPlanWorkflow(task);
-      printSuccess(`Planned with ${result.role} (${result.model})`);
-      printLine(result.path);
+      printSuccess(`Plan created with ${result.role} (${result.model})`);
+      printLine(`Plan: ${result.path}`);
+      if (result.agentId) {
+        printLine(chalk.dim(`Planner agent ${result.agentId} running in background. Check: bobo agent ${result.agentId}`));
+      }
     });
 
   program
     .command('verify [target]')
-    .description('Create an adversarial verification artifact')
+    .description('Run adversarial verification (build/test/lint checks)')
     .action(async (target?: string) => {
       const result = await runVerifyWorkflow(target);
-      printSuccess(`Verification scaffold created (${result.verdict})`);
-      printLine(result.path);
+      const icon = result.verdict === 'PASS' ? '✓' : result.verdict === 'FAIL' ? '✗' : '◐';
+      printSuccess(`Verification ${icon} ${result.verdict}`);
+      printLine(`Report: ${result.path}`);
     });
 
   program
     .command('interview <topic>')
-    .description('Run a deep interview scaffold')
+    .description('Generate Socratic interview questions for a topic')
     .action(async (topic: string) => {
       const result = await runInterviewWorkflow(topic);
-      printSuccess('Interview scaffold created');
-      printLine(result.path);
-      result.questions.forEach((q, i) => printLine(`${i + 1}. ${q}`));
+      printSuccess('Interview questions generated');
+      printLine(`Report: ${result.path}`);
+      printLine(chalk.bold('\nBase questions:'));
+      result.questions.forEach((q, i) => printLine(chalk.dim(`${i + 1}.`) + ` ${q}`));
+      if (result.agentId) {
+        printLine(chalk.dim(`\nAgent ${result.agentId} generating deeper questions. Check: bobo agent ${result.agentId}`));
+      }
     });
 
   program
     .command('ask <model> <prompt>')
-    .description('Create a cross-model ask artifact')
+    .description('Query a specific AI model (provider name or model ID)')
     .action(async (model: string, prompt: string) => {
       const result = await runAskWorkflow(model, prompt);
-      printSuccess(`Ask scaffold created for ${result.model}`);
-      printLine(result.path);
+      if (result.error) {
+        printError(`Ask failed: ${result.error}`);
+      } else {
+        printSuccess(`Response from ${result.model}`);
+        if (result.response) {
+          printLine(chalk.dim('─'.repeat(60)));
+          printLine(result.response);
+          printLine(chalk.dim('─'.repeat(60)));
+        }
+      }
+      printLine(`Full report: ${result.path}`);
     });
 
   // ─── Watch command ───────────────────────────────────────────

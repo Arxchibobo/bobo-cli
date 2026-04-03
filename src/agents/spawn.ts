@@ -76,3 +76,44 @@ export function listSpawnableRoles(): Array<{ role: string; description: string;
     model: def.model,
   }));
 }
+
+/**
+ * 实际 spawn 一个 sub-agent 并返回 agent ID
+ *
+ * 桥接到 sub-agents.ts 的真实执行
+ */
+export async function spawnAgent(request: SpawnRequest): Promise<{ id: string; error?: string }> {
+  const { spawnSubAgent } = await import('../sub-agents.js');
+  const { decision, agent, systemPrompt } = prepareSpawn(request);
+
+  const fullTask = `${systemPrompt}\n\n---\n\n${request.task}`;
+
+  // Map agent role to sub-agent role type
+  // Most agents map to 'worker', but some have special handling
+  let subAgentRole: 'explore' | 'plan' | 'worker' | 'verify';
+
+  switch (decision.role) {
+    case 'explore':
+      subAgentRole = 'explore';
+      break;
+    case 'planner':
+      subAgentRole = 'plan';
+      break;
+    case 'verifier':
+      subAgentRole = 'verify';
+      break;
+    default:
+      subAgentRole = 'worker';
+  }
+
+  return spawnSubAgent(fullTask, subAgentRole);
+}
+
+/**
+ * Spawn multiple agents in parallel for team workflows
+ */
+export async function spawnAgentTeam(
+  requests: SpawnRequest[]
+): Promise<Array<{ id: string; error?: string }>> {
+  return Promise.all(requests.map(req => spawnAgent(req)));
+}
