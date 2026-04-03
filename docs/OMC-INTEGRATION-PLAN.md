@@ -36,12 +36,12 @@ bobo plan "<task>"                # 结构化规划
 ```
 
 **实现：**
-- [ ] `src/workflows/team.ts` — Team pipeline (plan → prd → exec → verify → fix)
-- [ ] `src/workflows/interview.ts` — Deep interview (Socratic questioning)
-- [ ] `src/workflows/ask.ts` — Multi-model advisor (Claude/GPT/Gemini)
-- [ ] `src/workflows/verify.ts` — Adversarial verification
-- [ ] `src/workflows/plan.ts` — Structured planning
-- [ ] `src/cli.ts` — 注册新命令
+- [x] `src/workflows/team.ts` — Team pipeline (plan → prd → exec → verify → fix)
+- [x] `src/workflows/interview.ts` — Deep interview (Socratic questioning)
+- [x] `src/workflows/ask.ts` — Multi-model advisor (Claude/GPT/Gemini)
+- [x] `src/workflows/verify.ts` — Adversarial verification
+- [x] `src/workflows/plan.ts` — Structured planning
+- [x] `src/cli.ts` — 注册新命令
 
 **文件结构：**
 ```
@@ -106,10 +106,10 @@ export function routeTask(task: string): AgentRole {
 ```
 
 **实现：**
-- [ ] `src/agents/catalog.ts` — Agent 定义
-- [ ] `src/agents/router.ts` — 任务路由
-- [ ] `src/agents/spawn.ts` — Agent 生成逻辑
-- [ ] 更新 `src/sub-agents.ts` 使用新 catalog
+- [x] `src/agents/catalog.ts` — Agent 定义
+- [x] `src/agents/router.ts` — 任务路由
+- [x] `src/agents/spawn.ts` — Agent 生成逻辑
+- [x] 更新 `src/sub-agents.ts` 使用新 catalog
 
 ---
 
@@ -139,10 +139,10 @@ export function routeTask(task: string): AgentRole {
 ```
 
 **实现：**
-- [ ] `src/state/manager.ts` — 状态管理
-- [ ] `src/state/artifacts.ts` — 产物写入
-- [ ] `src/state/recovery.ts` — 会话恢复
-- [ ] 更新 `src/sessions.ts` 使用新状态层
+- [x] `src/state/manager.ts` — 状态管理
+- [x] `src/state/artifacts.ts` — 产物写入
+- [x] `src/state/recovery.ts` — 会话恢复
+- [x] 更新 `src/sessions.ts` 使用新状态层
 
 **API：**
 ```typescript

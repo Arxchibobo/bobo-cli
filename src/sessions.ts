@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 
 import { join } from 'node:path';
 import type { ChatCompletionMessageParam } from 'openai/resources/index.js';
 import { getConfigDir } from './config.js';
+import { writeSessionState, appendSessionHistory, type SessionState } from './state/manager.js';
 
 export interface Session {
   id: string;
@@ -52,6 +53,29 @@ export function saveSession(messages: ChatCompletionMessageParam[], cwd: string)
 
   const path = join(getSessionsDir(), `${id}.json`);
   writeFileSync(path, JSON.stringify(session, null, 2));
+
+  // Sync to new state layer for recovery and HUD
+  const stateEntry: SessionState = {
+    sessionId: id,
+    startedAt: session.startedAt,
+    lastActiveAt: session.updatedAt,
+    model: 'unknown',
+    effort: 'medium',
+    permissionMode: 'auto',
+    messageCount: session.messageCount,
+    tokenUsage: { input: 0, output: 0, total: 0 },
+    activeWorkflows: [],
+    matchedSkills: [],
+  };
+  try {
+    writeSessionState(id, stateEntry);
+    appendSessionHistory(id, {
+      event: 'session_saved',
+      timestamp: new Date().toISOString(),
+      messageCount: session.messageCount,
+    });
+  } catch { /* state layer write is best-effort */ }
+
   return id;
 }
 

@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getConfigDir } from './config.js';
+import { AGENT_CATALOG } from './agents/catalog.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const MAX_CONCURRENT = 3;
@@ -101,6 +102,13 @@ export function getAllowedToolsForRole(role: AgentRole): string[] {
  * Get role-specific system prompt injection.
  */
 export function getRolePromptInjection(role: AgentRole): string {
+  // Try to use catalog-based prompts first for richer role definitions
+  const catalogRole = role === 'worker' ? 'executor' : role === 'plan' ? 'planner' : role === 'verify' ? 'verifier' : role;
+  const catalogAgent = AGENT_CATALOG[catalogRole as keyof typeof AGENT_CATALOG];
+  const catalogContext = catalogAgent
+    ? `\n\n## Catalog Context\n- Role: ${catalogAgent.role}\n- Description: ${catalogAgent.description}\n- Use cases: ${catalogAgent.useCases.join(', ')}\n- Boundaries: ${catalogAgent.boundaries.join(', ')}`
+    : '';
+
   switch (role) {
     case 'explore':
       return `
@@ -117,7 +125,7 @@ You CANNOT:
 - Create or delete files
 - Make git commits
 
-Focus on gathering information and presenting it clearly.`;
+Focus on gathering information and presenting it clearly.${catalogContext}`;
 
     case 'plan':
       return `
@@ -138,7 +146,7 @@ Output a structured plan with:
 1. Tasks broken down into steps
 2. File paths that need changes
 3. Potential risks or blockers
-4. Estimated complexity`;
+4. Estimated complexity${catalogContext}`;
 
     case 'worker':
       return `
@@ -156,7 +164,7 @@ CRITICAL CONSTRAINTS:
 - Execute tasks directly yourself
 - If you encounter blockers, report them immediately
 
-Focus on DOING the work, not planning or delegating.`;
+Focus on DOING the work, not planning or delegating.${catalogContext}`;
 
     case 'verify':
       return `
@@ -177,7 +185,7 @@ You SHOULD:
 You MUST:
 - Return VERDICT: PASS / FAIL / PARTIAL
 - Provide specific evidence for failures
-- Suggest concrete fixes`;
+- Suggest concrete fixes${catalogContext}`;
 
     default:
       return '';
