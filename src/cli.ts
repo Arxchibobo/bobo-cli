@@ -30,6 +30,8 @@ import { initHooksTemplate } from './hooks.js';
 import { initMcpServers, shutdownMcpServers, getMcpStatus } from './mcp-client.js';
 import { startWatch } from './watcher.js';
 import { runAutonomous } from './autonomous.js';
+import { runTeamWorkflow, runPlanWorkflow, runVerifyWorkflow, runInterviewWorkflow, runAskWorkflow } from './workflows/index.js';
+import { getAllAgentRoles } from './agents/catalog.js';
 import type { EffortLevel } from './config.js';
 
 /**
@@ -352,9 +354,70 @@ export function registerCommands(program: Command): void {
     console.log(importSkills(resolved));
   });
 
+  // ─── Workflow commands ──────────────────────────────────────
+  program
+    .command('team <spec> <task>')
+    .description('Run a team workflow, e.g. bobo team 3:executor "build REST API"')
+    .action(async (spec: string, task: string) => {
+      const [countRaw, roleRaw] = spec.split(':');
+      const teamSize = Number.parseInt(countRaw, 10);
+      const roles = getAllAgentRoles();
+      if (!Number.isFinite(teamSize) || teamSize <= 0) {
+        printError('Invalid team size. Use format: <N>:<role>');
+        process.exit(1);
+      }
+      if (roleRaw && !roles.includes(roleRaw)) {
+        printError(`Invalid role: ${roleRaw}. Available: ${roles.join(', ')}`);
+        process.exit(1);
+      }
+      const result = await runTeamWorkflow(task, teamSize, roleRaw as never);
+      printSuccess(result.summary);
+      printLine(`Plan: ${result.planPath}`);
+      printLine(`PRD: ${result.prdPath}`);
+      printLine(`Artifact: ${result.teamPath}`);
+    });
+
+  program
+    .command('plan <task>')
+    .description('Create a structured execution plan')
+    .action(async (task: string) => {
+      const result = await runPlanWorkflow(task);
+      printSuccess(`Planned with ${result.role} (${result.model})`);
+      printLine(result.path);
+    });
+
+  program
+    .command('verify [target]')
+    .description('Create an adversarial verification artifact')
+    .action(async (target?: string) => {
+      const result = await runVerifyWorkflow(target);
+      printSuccess(`Verification scaffold created (${result.verdict})`);
+      printLine(result.path);
+    });
+
+  program
+    .command('interview <topic>')
+    .description('Run a deep interview scaffold')
+    .action(async (topic: string) => {
+      const result = await runInterviewWorkflow(topic);
+      printSuccess('Interview scaffold created');
+      printLine(result.path);
+      result.questions.forEach((q, i) => printLine(`${i + 1}. ${q}`));
+    });
+
+  program
+    .command('ask <model> <prompt>')
+    .description('Create a cross-model ask artifact')
+    .action(async (model: string, prompt: string) => {
+      const result = await runAskWorkflow(model, prompt);
+      printSuccess(`Ask scaffold created for ${result.model}`);
+      printLine(result.path);
+    });
+
   // ─── Watch command ───────────────────────────────────────────
   program
     .command('watch')
+
     .description('Watch files for changes and auto-run hooks (daemon-like mode)')
     .option('--ignore <patterns>', 'Additional ignore patterns (comma-separated)', '')
     .action((opts: { ignore: string }) => {
