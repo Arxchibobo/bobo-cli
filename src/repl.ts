@@ -131,6 +131,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       thinkingLevel: currentEffort,
       skillsCount: skills.filter(s => s.enabled).length,
       cwd: process.cwd(),
+      permissionMode: currentPermissionMode,
     });
   }
 

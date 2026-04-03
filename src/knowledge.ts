@@ -8,8 +8,19 @@ const ALWAYS_LOAD = ['system.md', 'rules.md', 'agent-directives.md'];
 // Files loaded on-demand based on task context
 const ON_DEMAND = ['engineering.md', 'error-catalog.md', 'verification.md', 'task-router.md', 'dream.md', 'advanced-patterns.md'];
 
-// Keywords that trigger on-demand loading
-const TRIGGER_MAP: Record<string, string[]> = {
+/**
+ * Keywords that trigger on-demand loading of knowledge files.
+ *
+ * Note: This TRIGGER_MAP controls which knowledge files (*.md docs) get loaded
+ * into the system prompt based on message keywords. This is separate from
+ * skill-router's trigger system which injects skill prompts.
+ *
+ * - TRIGGER_MAP: keyword → knowledge file mapping (for documentation)
+ * - skill-router: keyword → skill prompt injection (for capabilities)
+ *
+ * Both systems are complementary and work independently.
+ */
+export const TRIGGER_MAP: Record<string, string[]> = {
   'engineering.md': ['规划', '计划', '任务', '步骤', '复杂', 'plan', 'task', 'debug', '搜索', 'search'],
   'error-catalog.md': ['错误', 'error', 'bug', '调试', 'debug', '报错', 'fail', '修复', 'fix'],
   'verification.md': ['测试', 'test', '验证', 'verify', '检查', 'check', '确认'],

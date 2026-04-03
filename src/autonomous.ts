@@ -17,6 +17,8 @@ import { runAgent } from './agent.js';
 import { getConfigDir, type EffortLevel, type PermissionMode } from './config.js';
 import { printLine, printSuccess, printError, printWarning } from './ui.js';
 import { Spinner } from './spinner.js';
+import { runVerification, formatVerificationResult } from './verification-agent.js';
+import { runDream, shouldAutoDream } from './dream.js';
 
 export interface RunOptions {
   task: string;
@@ -109,6 +111,27 @@ TASK: ${task}`;
       if (result.response.includes('TASK COMPLETE')) {
         printLine(chalk.green('\n✅ Task completed!'));
         log.push('\n## Result: COMPLETE');
+
+        // Run verification after task completion
+        printLine(chalk.dim('\n🔍 Running verification...'));
+        try {
+          const verifyResult = await runVerification(task, result.response, { cwd: process.cwd() });
+          log.push('\n## Verification Results');
+          log.push(formatVerificationResult(verifyResult));
+
+          if (verifyResult.verdict === 'PASS') {
+            printSuccess('Verification: PASS');
+          } else if (verifyResult.verdict === 'FAIL') {
+            printWarning(`Verification: FAIL (${verifyResult.summary})`);
+          } else {
+            printLine(chalk.yellow(`Verification: PARTIAL (${verifyResult.summary})`));
+          }
+        } catch (e) {
+          const errMsg = (e as Error).message;
+          log.push(`\nVerification error: ${errMsg}`);
+          printWarning(`Verification failed: ${errMsg}`);
+        }
+
         break;
       }
 
@@ -145,6 +168,23 @@ TASK: ${task}`;
 
   // Cleanup
   process.removeListener('SIGINT', abortHandler);
+
+  // Run dream mode if needed
+  if (!aborted && shouldAutoDream()) {
+    printLine(chalk.dim('\n🌙 Consolidating memories...'));
+    try {
+      const dreamResult = await runDream({ verbose: false });
+      if (dreamResult.insights.length > 0) {
+        log.push('\n## Dream Mode Consolidation');
+        log.push(dreamResult.summary);
+        printSuccess(`Extracted ${dreamResult.insights.length} insights`);
+      }
+    } catch (e) {
+      const errMsg = (e as Error).message;
+      log.push(`\nDream mode error: ${errMsg}`);
+      // Non-fatal, continue
+    }
+  }
 
   printLine();
   printLine(chalk.dim('─'.repeat(60)));

@@ -10,6 +10,7 @@ export interface StatusBarInfo {
   thinkingLevel: string;
   skillsCount: number;
   cwd: string;
+  permissionMode?: string;
 }
 
 let currentInfo: StatusBarInfo | null = null;
@@ -50,7 +51,16 @@ export function renderStatusBar(): string {
   const sep = chalk.dim(' · ');
 
   // Left: permission mode indicator
-  const permLabel = chalk.yellow('▸▸') + ' ' + chalk.yellow.dim('auto');
+  const permMode = currentInfo.permissionMode || 'auto';
+  let permLabel: string;
+  if (permMode === 'yolo') {
+    permLabel = chalk.red('▸▸') + ' ' + chalk.red('yolo');
+  } else if (permMode === 'ask') {
+    permLabel = chalk.green('▸▸') + ' ' + chalk.green('ask');
+  } else {
+    // auto
+    permLabel = chalk.yellow('▸▸') + ' ' + chalk.yellow('auto');
+  }
 
   // Center/Right: effort + model
   const effortDot = currentInfo.thinkingLevel === 'high' ? chalk.green('●')
