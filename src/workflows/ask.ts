@@ -59,7 +59,7 @@ export async function runAskWorkflow(model: string, prompt: string): Promise<Ask
       messages: [
         { role: 'user', content: prompt },
       ],
-      max_tokens: 4000,
+      max_tokens: 16384,
     });
 
     response = completion.choices[0]?.message?.content || '(no response)';

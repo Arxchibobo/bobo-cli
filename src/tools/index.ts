@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, readdirSync } from 'node:fs';
+import { resolve, dirname, join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { glob } from 'glob';
 import { saveMemory, searchMemory } from '../memory.js';
@@ -367,8 +367,20 @@ function listDirectory(args: Record<string, unknown>): string {
   const dirPath = resolvePath((args.path as string) || '.');
   if (!existsSync(dirPath)) return `Directory not found: ${dirPath}`;
   try {
-    const result = execSync(`ls -la "${dirPath}"`, { encoding: 'utf-8', timeout: 5000 });
-    return result.trim();
+    // Cross-platform: use Node.js fs instead of shell commands
+    const entries = readdirSync(dirPath, { withFileTypes: true });
+    const lines = entries.map(e => {
+      const type = e.isDirectory() ? 'd' : e.isSymbolicLink() ? 'l' : '-';
+      try {
+        const stats = statSync(join(dirPath, e.name));
+        const size = stats.size.toString().padStart(10);
+        const mtime = stats.mtime.toISOString().slice(0, 19).replace('T', ' ');
+        return `${type}  ${size}  ${mtime}  ${e.name}`;
+      } catch {
+        return `${type}           -                     ${e.name}`;
+      }
+    });
+    return lines.length > 0 ? lines.join('\n') : '(empty directory)';
   } catch (e) {
     return `Error listing directory: ${e instanceof Error ? e.message : String(e)}`;
   }

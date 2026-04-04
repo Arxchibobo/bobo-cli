@@ -372,15 +372,18 @@ async function detectApiTests(result: string, cwd: string): Promise<Verification
   const port = portMatch[1];
 
   try {
-    // Simple health check
-    const output = execSync(`curl -s -o /dev/null -w "%{http_code}" http://localhost:${port}/health || echo "failed"`, {
-      cwd,
-      encoding: 'utf-8',
-      timeout: 5000,
-      stdio: ['pipe', 'pipe', 'pipe'],
+    // Cross-platform health check using Node.js http
+    const http = await import('node:http');
+    const statusCode = await new Promise<number>((resolve) => {
+      const req = http.default.get(`http://localhost:${port}/health`, { timeout: 5000 }, (res) => {
+        resolve(res.statusCode ?? 0);
+        res.resume();
+      });
+      req.on('error', () => resolve(0));
+      req.on('timeout', () => { req.destroy(); resolve(0); });
     });
 
-    if (output.includes('failed') || output.trim() === '000') {
+    if (statusCode === 0) {
       return {
         name: 'API Probe',
         passed: false,
@@ -391,7 +394,7 @@ async function detectApiTests(result: string, cwd: string): Promise<Verification
     return {
       name: 'API Probe',
       passed: true,
-      output: `API responding with HTTP ${output.trim()}`,
+      output: `API responding with HTTP ${statusCode}`,
     };
   } catch (e: unknown) {
     return {

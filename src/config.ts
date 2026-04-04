@@ -23,7 +23,7 @@ const DEFAULT_CONFIG: Config = {
   model: 'claude-sonnet-4-20250514',
   baseUrl: 'https://api.anthropic.com/v1',
   knowledgeDir: join(CONFIG_DIR, 'knowledge'),
-  maxTokens: 4096,
+  maxTokens: 16384,
   effort: 'medium',
   permissionMode: 'ask',
 };
