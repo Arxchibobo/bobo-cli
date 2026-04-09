@@ -146,7 +146,7 @@ export function buildRouteIndex(): void {
     const fullPath = join(skillsDir, entry);
     try {
       if (!statSync(fullPath).isDirectory()) continue;
-    } catch { continue; }
+    } catch (_) { /* intentionally ignored: unreadable skill file */ continue; }
 
     const skillFile = join(fullPath, 'SKILL.md');
     if (!existsSync(skillFile)) continue;
@@ -304,7 +304,7 @@ export function routeMessage(
             score += 25;
             matchedBy.push(`pattern: ${pat}`);
           }
-        } catch { /* invalid regex, skip */ }
+        } catch (_) { /* intentionally ignored: invalid regex pattern */ }
       }
     }
 

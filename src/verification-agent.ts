@@ -244,7 +244,8 @@ async function verifyLint(cwd: string): Promise<VerificationCheck> {
             error: `${linter} found issues: ${err.stderr || err.stdout || err.message || 'Unknown error'}`,
           };
         }
-      } catch {
+      } catch (_) {
+        /* intentionally ignored: invalid verification payload */
         // Linter not found, continue
       }
     }
@@ -482,7 +483,8 @@ async function detectDatabaseTests(cwd: string): Promise<VerificationCheck> {
         passed: true,
         output: output.trim(),
       };
-    } catch {
+    } catch (_) {
+      /* intentionally ignored: verification cleanup failure */
       // Try next command
     }
   }

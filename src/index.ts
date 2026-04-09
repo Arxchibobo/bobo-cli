@@ -16,14 +16,14 @@ let version = '0.1.0';
 try {
   const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'));
   version = pkg.version;
-} catch { /* use default */ }
+} catch (_) { /* intentionally ignored: package.json read failure, use default version */ }
 
 const program = new Command();
 
 program
   .name('bobo')
   .description('🐕 Bobo CLI — Portable AI Engineering Assistant')
-  .version(version)
+  .version(version, '-v, --version')
   .argument('[prompt...]', 'Run a one-shot prompt without entering REPL')
   .addOption(new Option('-p, --print', 'Non-interactive mode: print response and exit (supports piped input)'))
   .addOption(new Option('-c, --continue', 'Continue most recent conversation'))

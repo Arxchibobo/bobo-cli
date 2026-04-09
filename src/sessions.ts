@@ -2,7 +2,7 @@
  * Session persistence — save/restore conversation history.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ChatCompletionMessageParam } from 'openai/resources/index.js';
 import { getConfigDir } from './config.js';
@@ -26,6 +26,38 @@ function ensureSessionsDir(): void {
   const dir = getSessionsDir();
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
+  }
+}
+
+function cleanOldSessions(maxAgeDays: number = 30, maxCount: number = 50): void {
+  const dir = getSessionsDir();
+  if (!existsSync(dir)) return;
+
+  const files = readdirSync(dir)
+    .filter(f => f.endsWith('.json'))
+    .sort()
+    .reverse();
+
+  const toDelete = files.slice(maxCount);
+  const cutoff = Date.now() - maxAgeDays * 86400000;
+
+  for (const f of files) {
+    try {
+      const stat = statSync(join(dir, f));
+      if (stat.mtimeMs < cutoff && !toDelete.includes(f)) {
+        toDelete.push(f);
+      }
+    } catch (_) {
+      /* intentionally ignored: skipped unreadable session file during cleanup */
+    }
+  }
+
+  for (const f of new Set(toDelete)) {
+    try {
+      unlinkSync(join(dir, f));
+    } catch (_) {
+      /* intentionally ignored: skipped undeletable session file during cleanup */
+    }
   }
 }
 
@@ -53,6 +85,7 @@ export function saveSession(messages: ChatCompletionMessageParam[], cwd: string)
 
   const path = join(getSessionsDir(), `${id}.json`);
   writeFileSync(path, JSON.stringify(session, null, 2));
+  cleanOldSessions();
 
   // Sync to new state layer for recovery and HUD
   const stateEntry: SessionState = {
@@ -74,7 +107,7 @@ export function saveSession(messages: ChatCompletionMessageParam[], cwd: string)
       timestamp: new Date().toISOString(),
       messageCount: session.messageCount,
     });
-  } catch { /* state layer write is best-effort */ }
+  } catch (_) { /* intentionally ignored: state layer write is best-effort */ }
 
   return id;
 }
@@ -104,7 +137,8 @@ export function listSessions(limit = 10): Omit<Session, 'messages'>[] {
         messageCount: session.messageCount,
         firstUserMessage: session.firstUserMessage,
       };
-    } catch {
+    } catch (_) {
+      /* intentionally ignored: corrupted session file, return placeholder */
       return {
         id: f.replace('.json', ''),
         startedAt: '',
@@ -125,7 +159,8 @@ export function loadSession(id: string): Session | null {
   if (!existsSync(path)) return null;
   try {
     return JSON.parse(readFileSync(path, 'utf-8'));
-  } catch {
+  } catch (_) {
+    /* intentionally ignored: corrupted session file */
     return null;
   }
 }

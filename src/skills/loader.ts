@@ -29,7 +29,7 @@ function loadSkillsFromDir(dir: string, source: 'builtin' | 'user' | 'project'):
       const fullPath = join(categoryDir, entry);
       try {
         if (!statSync(fullPath).isDirectory() && !entry.endsWith('.md')) continue;
-      } catch { continue; }
+      } catch (_) { /* intentionally ignored: unloadable skill file */ continue; }
 
       // Support both directory-with-SKILL.md and plain .md file
       let content: string;
@@ -67,7 +67,7 @@ function loadSkillsFromDir(dir: string, source: 'builtin' | 'user' | 'project'):
     const fullPath = join(dir, entry);
     try {
       if (!statSync(fullPath).isDirectory()) continue;
-    } catch { continue; }
+    } catch (_) { /* intentionally ignored: unloadable skill file */ continue; }
 
     const skillFile = join(fullPath, 'SKILL.md');
     if (!existsSync(skillFile)) continue;

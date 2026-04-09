@@ -31,7 +31,8 @@ async function main(): Promise<void> {
   let taskData: SubAgentTask;
   try {
     taskData = JSON.parse(readFileSync(taskFile, 'utf-8'));
-  } catch {
+  } catch (_) {
+    /* intentionally ignored: task file read/write failure */
     process.exit(1);
   }
 
@@ -47,7 +48,7 @@ async function main(): Promise<void> {
   // Change to task's cwd
   try {
     process.chdir(taskData.cwd);
-  } catch { /* stay in current dir */ }
+  } catch (_) { /* intentionally ignored: stay in current dir */ }
 
   try {
     const role = taskData.role || 'worker';

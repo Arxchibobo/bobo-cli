@@ -22,6 +22,18 @@ import { Spinner } from './spinner.js';
 import { estimateTokens } from './compactor.js';
 import { executeToolWithGovernance, getToolMetadata } from './tool-governance.js';
 
+// ─── OpenAI Client Cache ─────────────────────────────────────
+let cachedClient: OpenAI | null = null;
+let cachedClientKey = '';
+
+function getClient(apiKey: string, baseUrl: string): OpenAI {
+  const key = `${apiKey}:${baseUrl}`;
+  if (cachedClient && cachedClientKey === key) return cachedClient;
+  cachedClient = new OpenAI({ apiKey, baseURL: baseUrl });
+  cachedClientKey = key;
+  return cachedClient;
+}
+
 export interface AgentOptions {
   onText?: (text: string) => void;
   signal?: AbortSignal;
@@ -50,7 +62,7 @@ function loadBoboMd(): string | null {
       try {
         const content = readFileSync(p, 'utf-8').trim();
         if (content) return content;
-      } catch { /* skip */ }
+      } catch (_) { /* intentionally ignored: BOBO.md is optional */ }
     }
   }
   return null;
@@ -84,10 +96,7 @@ export async function runAgent(
     throw new Error('API key not configured. Run: bobo config set apiKey <your-key>');
   }
 
-  const client = new OpenAI({
-    apiKey: config.apiKey,
-    baseURL: config.baseUrl,
-  });
+  const client = getClient(config.apiKey, config.baseUrl);
 
   const callStartTime = Date.now();
   const spinner = new Spinner();
@@ -193,7 +202,10 @@ export async function runAgent(
           tools: [...toolDefinitions, ...getMcpToolDefinitions()],
           max_tokens: config.maxTokens,
           stream: true,
+          stream_options: { include_usage: true },
         });
+
+        let streamUsage: { prompt_tokens?: number; completion_tokens?: number } | null = null;
 
         for await (const chunk of stream) {
           if (options.signal?.aborted) {
@@ -227,6 +239,20 @@ export async function runAgent(
               if (tc.function?.arguments) existing.arguments += tc.function.arguments;
             }
           }
+
+          // Capture usage from final streaming chunk
+          if (chunk.usage) {
+            streamUsage = chunk.usage;
+          }
+        }
+
+        // Record streaming usage after loop ends
+        if (streamUsage) {
+          recordUsage(
+            streamUsage.prompt_tokens || 0,
+            streamUsage.completion_tokens || 0,
+            toolCalls.size
+          );
         }
       } catch (streamErr) {
         if ((streamErr as Error).message === 'Aborted') throw streamErr;
@@ -296,7 +322,8 @@ export async function runAgent(
         let args: Record<string, unknown> = {};
         try {
           args = JSON.parse(tc.arguments);
-        } catch {
+        } catch (_) {
+          /* intentionally ignored: malformed JSON defaults to empty args */
           args = {};
         }
 

@@ -16,6 +16,7 @@ export interface UsageStats {
 const PRICING: Record<string, { input: number; output: number }> = {
   // Claude models
   'claude-sonnet-4-20250514': { input: 3.0, output: 15.0 },
+  'claude-opus-4-20250514': { input: 15.0, output: 75.0 },
   'claude-opus-4-6': { input: 15.0, output: 75.0 },
   'claude-3-5-haiku-20241022': { input: 1.0, output: 5.0 },
 

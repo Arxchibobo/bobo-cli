@@ -85,7 +85,8 @@ function loadManifest(): SkillManifest {
   if (existsSync(path)) {
     try {
       return JSON.parse(readFileSync(path, 'utf-8'));
-    } catch {
+    } catch (_) {
+      /* intentionally ignored: skill config parse failure */
       return { skills: {} };
     }
   }
@@ -128,7 +129,7 @@ export function listSkills(): Skill[] {
         // Use statSync to follow symlinks
         const stat = statSync(fullPath);
         if (!stat.isDirectory()) continue;
-      } catch { continue; }
+      } catch (_) { /* intentionally ignored: unreadable skill */ continue; }
 
       const skillFile = join(fullPath, 'SKILL.md');
       if (existsSync(skillFile)) {
@@ -203,7 +204,7 @@ export function loadSkillPrompts(userMessage?: string): string {
       const fullPath = join(skillsDir, entry);
       try {
         if (!statSync(fullPath).isDirectory()) continue;
-      } catch { continue; }
+      } catch (_) { /* intentionally ignored: unreadable skill */ continue; }
       if (manifest.skills[entry]?.enabled === false) continue;
       const skillFile = join(fullPath, 'SKILL.md');
       if (!existsSync(skillFile)) continue;
@@ -256,7 +257,7 @@ export function importSkills(sourceDir: string): string {
     const fullPath = join(sourceDir, entry);
     try {
       if (statSync(fullPath).isDirectory()) dirs.push(entry);
-    } catch { /* skip broken symlinks */ }
+    } catch (_) { /* intentionally ignored: skip broken symlinks */ }
   }
 
   let imported = 0;
@@ -328,7 +329,7 @@ export function importSkills(sourceDir: string): string {
             const st = statSync(src);
             if (st.size < 50000) copyFileSync(src, dst);
           }
-        } catch { /* skip files with permission issues */ }
+        } catch (_) { /* intentionally ignored: skip files with permission issues */ }
       }
 
       // Also copy references/ directory if it exists
@@ -342,11 +343,11 @@ export function importSkills(sourceDir: string): string {
             try {
               const st = statSync(join(refsDir, f));
               if (st.size < 50000) copyFileSync(join(refsDir, f), join(targetRefs, f));
-            } catch { /* skip */ }
+            } catch (_) { /* intentionally ignored: unreadable skill ref */ }
           }
-        } catch { /* skip unreadable refs */ }
+        } catch (_) { /* intentionally ignored: skip unreadable refs */ }
       }
-    } catch { /* skip extra file copy errors */ }
+    } catch (_) { /* intentionally ignored: skip extra file copy errors */ }
 
     imported++;
   }

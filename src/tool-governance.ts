@@ -12,6 +12,7 @@
  */
 
 import { runHooks } from './hooks.js';
+import { resolve } from 'node:path';
 
 /**
  * Risk levels for tool operations.
@@ -208,15 +209,29 @@ function validateToolInputs(toolName: string, args: Record<string, unknown>): {
   switch (toolName) {
     case 'read_file':
     case 'write_file':
-    case 'edit_file':
+    case 'edit_file': {
       if (!args.path || typeof args.path !== 'string') {
         return { valid: false, error: 'Missing or invalid "path" parameter' };
       }
-      // Check for path traversal attempts
-      if ((args.path as string).includes('..')) {
+      const pathArg = args.path as string;
+      if (pathArg.includes('\0')) {
+        return { valid: false, error: 'Path contains null bytes' };
+      }
+      if (pathArg.includes('..')) {
         return { valid: false, error: 'Path traversal not allowed' };
       }
+      if (pathArg.startsWith('/')) {
+        const cwd = process.cwd();
+        const resolved = resolve(pathArg);
+        if (resolved !== cwd && !resolved.startsWith(`${cwd}/`)) {
+          return { valid: false, error: 'Absolute path outside working directory not allowed' };
+        }
+      }
+      if (toolName === 'edit_file' && (!args.oldText || !args.newText)) {
+        return { valid: false, error: 'Missing "oldText" or "newText" parameter' };
+      }
       break;
+    }
 
     case 'shell':
       if (!args.command || typeof args.command !== 'string') {
@@ -224,16 +239,32 @@ function validateToolInputs(toolName: string, args: Record<string, unknown>): {
       }
       // Check for dangerous patterns
       const cmd = args.command as string;
-      if (cmd.includes('rm -rf /') || cmd.includes('mkfs') || cmd.includes(':(){:|:&};:')) {
-        return { valid: false, error: 'Dangerous command blocked' };
+      const dangerousPatterns: Array<{ pattern: RegExp; reason: string }> = [
+        { pattern: /rm\s+-rf\s+\/(?:\s|$)/, reason: 'rm -rf / blocked' },
+        { pattern: /rm\s+-rf\s+~/, reason: 'rm -rf ~ blocked' },
+        { pattern: /rm\s+-rf\s+\$HOME/, reason: 'rm -rf $HOME blocked' },
+        { pattern: /mkfs/, reason: 'mkfs blocked' },
+        { pattern: /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/, reason: 'Fork bomb blocked' },
+        { pattern: /curl\s.*\|\s*(bash|sh|zsh)/, reason: 'Pipe-to-shell blocked' },
+        { pattern: /wget\s.*\|\s*(bash|sh|zsh)/, reason: 'Pipe-to-shell blocked' },
+        { pattern: /curl\s.*\|\s*sudo/, reason: 'Pipe-to-sudo blocked' },
+        { pattern: /wget\s.*\|\s*sudo/, reason: 'Pipe-to-sudo blocked' },
+        { pattern: /chmod\s+777/, reason: 'chmod 777 blocked' },
+        { pattern: /dd\s+if=/, reason: 'dd blocked (disk destruction risk)' },
+        { pattern: />\s*\/dev\/sd[a-z]/, reason: 'Direct disk write blocked' },
+        { pattern: /\bshutdown\b/, reason: 'shutdown blocked' },
+        { pattern: /\breboot\b/, reason: 'reboot blocked' },
+        { pattern: /\bhalt\b/, reason: 'halt blocked' },
+        { pattern: /\bpkill\b/, reason: 'pkill blocked' },
+        { pattern: /\bkillall\b/, reason: 'killall blocked' },
+      ];
+      for (const { pattern, reason } of dangerousPatterns) {
+        if (pattern.test(cmd)) {
+          return { valid: false, error: `Dangerous command blocked: ${reason}` };
+        }
       }
       break;
 
-    case 'edit_file':
-      if (!args.oldText || !args.newText) {
-        return { valid: false, error: 'Missing "oldText" or "newText" parameter' };
-      }
-      break;
   }
 
   return { valid: true };
@@ -347,8 +378,8 @@ export async function executeToolWithGovernance(
         BOBO_TOOL_RISK: metadata.riskLevel,
         BOBO_TOOL_SUCCESS: 'true',
       });
-    } catch {
-      // Post-execution hooks shouldn't block
+    } catch (_) {
+      /* intentionally ignored: post-execution hooks are non-blocking */
     }
 
     // Step 7: Update governance state

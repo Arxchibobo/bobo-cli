@@ -47,7 +47,8 @@ export function shouldAutoDream(): boolean {
   if (existsSync(lastDreamPath)) {
     try {
       lastDreamTime = parseInt(readFileSync(lastDreamPath, 'utf-8'), 10);
-    } catch {
+    } catch (_) {
+      /* intentionally ignored: optional dream source unreadable */
       // Invalid timestamp, treat as never dreamed
     }
   }
@@ -67,7 +68,8 @@ export function shouldAutoDream(): boolean {
       const content = readFileSync(join(memoryDir, file), 'utf-8');
       // Count entries (rough heuristic: lines starting with - or ##)
       entryCount += (content.match(/^[-#]/gm) || []).length;
-    } catch {
+    } catch (_) {
+      /* intentionally ignored: optional dream source unreadable */
       // Skip unreadable files
     }
   }
@@ -145,7 +147,8 @@ function loadAllMemories(memoryDir: string): string {
       if (content.trim()) {
         sections.push(`## Source: ${file}\n\n${content}`);
       }
-    } catch {
+    } catch (_) {
+      /* intentionally ignored: optional dream source unreadable */
       // Skip unreadable files
     }
   }

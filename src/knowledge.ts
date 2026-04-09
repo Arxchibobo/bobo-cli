@@ -90,7 +90,8 @@ function loadCustomFiles(dir: string, knownFiles: Set<string>, parts: string[]):
       const content = loadFile(dir, file);
       if (content) parts.push(content);
     }
-  } catch {
+  } catch (_) {
+    /* intentionally ignored: knowledge file read failure */
     // ignore read errors
   }
 }
@@ -126,7 +127,7 @@ export function listKnowledgeFiles(): { file: string; type: 'always' | 'on-deman
       for (const file of files) {
         result.push({ file, type: 'custom', source: 'user' });
       }
-    } catch { /* ignore */ }
+    } catch (_) { /* intentionally ignored: optional knowledge file */ }
   }
 
   return result;

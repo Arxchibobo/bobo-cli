@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, readdirSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 import { glob } from 'glob';
 import { saveMemory, searchMemory } from '../memory.js';
 import { plannerToolDefinitions, executePlannerTool, isPlannerTool } from '../planner.js';
@@ -325,10 +325,15 @@ function editFile(args: Record<string, unknown>): string {
   const content = readFileSync(filePath, 'utf-8');
   const oldText = args.oldText as string;
   const newText = args.newText as string;
-  if (!content.includes(oldText)) {
+  const count = content.split(oldText).length - 1;
+  if (count === 0) {
     return `oldText not found in file. Make sure it matches exactly (including whitespace).`;
   }
-  const updated = content.replace(oldText, newText);
+  if (count > 1) {
+    return `oldText found ${count} times in file. Provide more surrounding context to make the match unique.`;
+  }
+  const idx = content.indexOf(oldText);
+  const updated = content.slice(0, idx) + newText + content.slice(idx + oldText.length);
   writeFileSync(filePath, updated);
   return `Edited ${filePath}`;
 }
@@ -358,7 +363,7 @@ function searchFiles(args: Record<string, unknown>): string {
           if (results.length >= maxResults) break;
         }
       }
-    } catch { /* skip unreadable */ }
+    } catch (_) { /* intentionally ignored: skip unreadable files */ }
   }
   return results.length > 0 ? results.join('\n') : `No matches for "${grepPattern}" in ${files.length} files`;
 }
@@ -371,13 +376,19 @@ function listDirectory(args: Record<string, unknown>): string {
     const entries = readdirSync(dirPath, { withFileTypes: true });
     const lines = entries.map(e => {
       const type = e.isDirectory() ? 'd' : e.isSymbolicLink() ? 'l' : '-';
+      const name = e.name;
+      // Skip stat for directories to save syscalls
+      if (e.isDirectory()) {
+        return `${type}           -                     ${name}/`;
+      }
       try {
-        const stats = statSync(join(dirPath, e.name));
+        const stats = statSync(join(dirPath, name));
         const size = stats.size.toString().padStart(10);
         const mtime = stats.mtime.toISOString().slice(0, 19).replace('T', ' ');
-        return `${type}  ${size}  ${mtime}  ${e.name}`;
-      } catch {
-        return `${type}           -                     ${e.name}`;
+        return `${type}  ${size}  ${mtime}  ${name}`;
+      } catch (_) {
+        /* intentionally ignored: stat may fail for broken symlinks or permission issues */
+        return `${type}           -                     ${name}`;
       }
     });
     return lines.length > 0 ? lines.join('\n') : '(empty directory)';
@@ -480,9 +491,9 @@ function gitCommit(args: Record<string, unknown>): string {
 
   try {
     if (addAll) {
-      execSync('git add -A', { cwd, encoding: 'utf-8', timeout: 5000 });
+      execFileSync('git', ['add', '-A'], { cwd, encoding: 'utf-8', timeout: 5000 });
     }
-    const result = execSync(`git commit -m "${message.replace(/"/g, '\\"')}"`, {
+    const result = execFileSync('git', ['commit', '-m', message], {
       cwd,
       encoding: 'utf-8',
       timeout: 10000,
@@ -500,8 +511,8 @@ function gitPush(args: Record<string, unknown>): string {
   const branch = args.branch as string | undefined;
 
   try {
-    const cmd = branch ? `git push ${remote} ${branch}` : `git push ${remote}`;
-    const result = execSync(cmd, { cwd, encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] });
+    const gitArgs = branch ? ['push', remote, branch] : ['push', remote];
+    const result = execFileSync('git', gitArgs, { cwd, encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] });
     return result.trim() || 'Push successful';
   } catch (e: unknown) {
     const err = e as { stdout?: string; stderr?: string };

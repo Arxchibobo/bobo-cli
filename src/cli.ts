@@ -134,7 +134,7 @@ export function registerCommands(program: Command): void {
           const dest = join(userSkillsDir, skillName);
           try {
             if (!statSync(src).isDirectory()) continue;
-          } catch { continue; }
+          } catch (_) { /* intentionally ignored: unreadable installed skill */ continue; }
           if (!existsSync(dest)) {
             cpSync(src, dest, { recursive: true });
             installed++;
@@ -145,7 +145,7 @@ export function registerCommands(program: Command): void {
           let manifest: Record<string, unknown> = {};
           try {
             manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
-          } catch { manifest = { version: 1, skills: {} }; }
+          } catch (_) { manifest = { version: 1, skills: {} }; /* intentionally ignored: malformed manifest */ }
           const skills = (manifest.skills || {}) as Record<string, { enabled: boolean }>;
           for (const skillName of readdirSync(userSkillsDir)) {
             if (!skills[skillName]) {
@@ -202,7 +202,8 @@ export function registerCommands(program: Command): void {
         try {
           const output = execSync(check.cmd, { timeout: 5000, stdio: 'pipe' }).toString().trim().split('\n')[0];
           printLine(`  ${chalk.green('✓')} ${check.name.padEnd(12)} ${chalk.dim(output)}`);
-        } catch {
+        } catch (_) {
+          /* intentionally ignored: skill metadata read failure */
           const icon = check.required ? chalk.red('✗') : chalk.yellow('○');
           const label = check.required ? chalk.red('MISSING (required)') : chalk.yellow('not found (optional)');
           printLine(`  ${icon} ${check.name.padEnd(12)} ${label}`);
@@ -224,7 +225,7 @@ export function registerCommands(program: Command): void {
       const skillsDir = join(getConfigDir(), 'skills');
       if (existsSync(skillsDir)) {
         const count = readdirSync(skillsDir).filter(f => {
-          try { return statSync(join(skillsDir, f)).isDirectory(); } catch { return false; }
+          try { return statSync(join(skillsDir, f)).isDirectory(); } catch (_) { return false; /* intentionally ignored: stat failure */ }
         }).length;
         printLine(`  ${chalk.green('✓')} ${'Skills'.padEnd(12)} ${chalk.dim(`${count} installed`)}`);
       } else {
@@ -593,7 +594,8 @@ Keep changes minimal and focused. Do not break existing functionality.`;
           }
         }
         printLine();
-      } catch {
+      } catch (_) {
+        /* intentionally ignored: command best-effort failure */
         printError('Failed to parse hooks.json');
       }
     });

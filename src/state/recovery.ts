@@ -39,7 +39,7 @@ export function recoverContext(): RecoveryContext {
     try {
       const state: SessionState = JSON.parse(readFileSync(contextPath, 'utf-8'));
       recentSessions.push(state);
-    } catch { continue; }
+    } catch (_) { /* intentionally ignored: malformed recovery file */ continue; }
   }
 
   const lastSession = recentSessions[0] ?? null;
@@ -75,7 +75,8 @@ export function getRecentHistory(sessionId: string, maxLines = 50): string[] {
     const content = readFileSync(historyPath, 'utf-8');
     const lines = content.trim().split('\n').filter(Boolean);
     return lines.slice(-maxLines);
-  } catch {
+  } catch (_) {
+    /* intentionally ignored: recovery scan failure */
     return [];
   }
 }

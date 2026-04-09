@@ -1,0 +1,18 @@
+# Core skills shipped with bobo-cli
+# Only these are included in the npm package to reduce bloat
+
+high-agency
+memory-manager
+context-budget-analyzer
+context-compressor
+context-optimization-suite
+code-review
+code-review-expert
+planning-with-files
+verify
+skill-creator
+github
+backend-expert
+frontend-expert
+testing-expert
+orchestrator

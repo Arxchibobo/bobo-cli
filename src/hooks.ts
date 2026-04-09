@@ -58,7 +58,7 @@ export function loadHooks(): HookConfig {
             merged[event] = [...(merged[event] || []), cmds];
           }
         }
-      } catch { /* skip malformed */ }
+      } catch (_) { /* intentionally ignored: skip malformed hook config */ }
     }
   }
 
@@ -89,7 +89,8 @@ export function runHooks(
         stdio: 'pipe',
         cwd: process.cwd(),
       });
-    } catch {
+    } catch (_) {
+      /* intentionally ignored: hook script execution failure */
       allOk = false;
     }
   }

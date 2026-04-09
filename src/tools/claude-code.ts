@@ -102,7 +102,7 @@ function findClaudeCode(): string | null {
         claudeCodePath = cmd;
         return cmd;
       }
-    } catch { /* not found */ }
+    } catch (_) { /* intentionally ignored: claude-code binary not found */ }
   }
 
   claudeCodePath = '';
@@ -320,7 +320,7 @@ export function shouldDelegate(taskDescription: string): DelegationDecision {
  */
 export function cleanupClaudeSessions(): void {
   for (const [, session] of sessions) {
-    try { session.process.kill(); } catch { /* ignore */ }
+    try { session.process.kill(); } catch (_) { /* intentionally ignored: process already dead */ }
   }
   sessions.clear();
 }

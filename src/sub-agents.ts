@@ -240,7 +240,7 @@ export function spawnSubAgent(task: string, role: AgentRole = 'worker'): { id: s
           if (code !== 0 && !updated.error) updated.error = `Exited with code ${code}`;
           writeFileSync(taskFile, JSON.stringify(updated, null, 2));
         }
-      } catch { /* file may be already updated */ }
+      } catch (_) { /* intentionally ignored: task file may already be updated by runner */ }
     });
 
     child.unref();
@@ -270,7 +270,8 @@ export function listSubAgents(limit = 20): SubAgentTask[] {
     .map(f => {
       try {
         return JSON.parse(readFileSync(join(dir, f), 'utf-8')) as SubAgentTask;
-      } catch {
+      } catch (_) {
+        /* intentionally ignored: corrupted agent task file */
         return null;
       }
     })
@@ -285,7 +286,8 @@ export function getSubAgent(id: string): SubAgentTask | null {
   if (!existsSync(path)) return null;
   try {
     return JSON.parse(readFileSync(path, 'utf-8'));
-  } catch {
+  } catch (_) {
+    /* intentionally ignored: corrupted agent task file */
     return null;
   }
 }

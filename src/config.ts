@@ -51,7 +51,8 @@ export function loadConfig(): Config {
       }
     }
     return config;
-  } catch {
+  } catch (_) {
+    /* intentionally ignored: malformed config.json, use defaults */
     return { ...DEFAULT_CONFIG };
   }
 }

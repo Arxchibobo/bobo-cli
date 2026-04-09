@@ -183,7 +183,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         if (dreamResult.insights.length > 0) {
           printLine(chalk.green(`✨ Extracted ${dreamResult.insights.length} insights during shutdown`));
         }
-      } catch {
+      } catch (_) {
+        /* intentionally ignored: resume session unavailable */
         // Silent failure on shutdown
       }
     }
@@ -288,7 +289,8 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
             : 'xclip -selection clipboard';
           execSync(clipCmd, { input: textToCopy, timeout: 3000 });
           printSuccess('Copied to clipboard!');
-        } catch {
+        } catch (_) {
+          /* intentionally ignored: compact state parse failure */
           // Fallback: write to file
           const copyPath = join(getConfigDir(), 'last-copy.txt');
           writeFileSync(copyPath, textToCopy);

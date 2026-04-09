@@ -67,7 +67,8 @@ export function readArtifact(type: ArtifactType, filename: string): string | nul
 
   try {
     return readFileSync(path, 'utf-8');
-  } catch {
+  } catch (_) {
+    /* intentionally ignored: artifacts file missing or malformed */
     return null;
   }
 }
@@ -81,7 +82,8 @@ export function listArtifacts(type: ArtifactType): string[] {
 
   try {
     return readdirSync(dir).filter(f => f.endsWith('.md') || f.endsWith('.json'));
-  } catch {
+  } catch (_) {
+    /* intentionally ignored: artifacts file missing or malformed */
     return [];
   }
 }

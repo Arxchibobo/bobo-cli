@@ -18,6 +18,29 @@ import { join } from 'node:path';
 import { getConfigDir } from './config.js';
 import type { ChatCompletionTool } from 'openai/resources/index.js';
 
+/**
+ * Newline-delimited JSON-RPC buffer.
+ * Handles TCP chunks that may not align with message boundaries.
+ */
+class JsonRpcBuffer {
+  private buffer = '';
+
+  feed(chunk: string): object[] {
+    this.buffer += chunk;
+    const messages: object[] = [];
+    const lines = this.buffer.split('\n');
+    this.buffer = lines.pop() || ''; // keep incomplete line
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        messages.push(JSON.parse(trimmed));
+      } catch (_) { /* intentionally ignored: skip non-JSON lines */ }
+    }
+    return messages;
+  }
+}
+
 interface McpServerConfig {
   name: string;
   transport: 'stdio' | 'http';
@@ -52,7 +75,8 @@ function loadMcpConfig(): McpServerConfig[] {
   try {
     const raw = JSON.parse(readFileSync(configPath, 'utf-8'));
     return raw.servers || [];
-  } catch {
+  } catch (_) {
+    /* intentionally ignored: malformed mcp.json config */
     return [];
   }
 }
@@ -86,6 +110,7 @@ async function connectStdioServer(config: McpServerConfig): Promise<void> {
     });
 
     server.process = child;
+    const buffer = new JsonRpcBuffer();
 
     // Send initialize request
     const initRequest = JSON.stringify({
@@ -101,27 +126,26 @@ async function connectStdioServer(config: McpServerConfig): Promise<void> {
 
     child.stdin?.write(initRequest);
 
-    // Read response with timeout
-    const response = await new Promise<string>((resolve, reject) => {
+    // Read init response with timeout
+    await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('timeout')), 10000);
-      let data = '';
-      child.stdout?.on('data', (chunk: Buffer) => {
-        data += chunk.toString();
-        if (data.includes('\n')) {
-          clearTimeout(timeout);
-          resolve(data.split('\n')[0]);
+      const handler = (chunk: Buffer) => {
+        const messages = buffer.feed(chunk.toString());
+        for (const msg of messages) {
+          if ((msg as { id?: number }).id === 1) {
+            clearTimeout(timeout);
+            child.stdout?.removeListener('data', handler);
+            resolve();
+            return;
+          }
         }
-      });
+      };
+      child.stdout?.on('data', handler);
       child.on('error', (err) => {
         clearTimeout(timeout);
         reject(err);
       });
     });
-
-    // Parse and list tools
-    try {
-      JSON.parse(response); // validate JSON
-    } catch { /* non-JSON response */ }
 
     // Request tools list
     const toolsRequest = JSON.stringify({
@@ -133,44 +157,38 @@ async function connectStdioServer(config: McpServerConfig): Promise<void> {
 
     child.stdin?.write(toolsRequest);
 
-    const toolsResponse = await new Promise<string>((resolve, reject) => {
+    const toolsResponse = await new Promise<object>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('timeout')), 10000);
-      let data = '';
       const handler = (chunk: Buffer) => {
-        data += chunk.toString();
-        const lines = data.split('\n').filter(l => l.trim());
-        // Find line with id: 2
-        for (const line of lines) {
-          try {
-            const parsed = JSON.parse(line);
-            if (parsed.id === 2) {
-              clearTimeout(timeout);
-              child.stdout?.removeListener('data', handler);
-              resolve(line);
-              return;
-            }
-          } catch { /* not JSON yet */ }
+        const messages = buffer.feed(chunk.toString());
+        for (const msg of messages) {
+          if ((msg as { id?: number }).id === 2) {
+            clearTimeout(timeout);
+            child.stdout?.removeListener('data', handler);
+            resolve(msg);
+            return;
+          }
         }
       };
       child.stdout?.on('data', handler);
     });
 
     try {
-      const parsed = JSON.parse(toolsResponse);
+      const parsed = toolsResponse as { result?: { tools?: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }> } };
       if (parsed.result?.tools) {
-        server.tools = parsed.result.tools.map((t: { name: string; description?: string; inputSchema?: Record<string, unknown> }) => ({
+        server.tools = parsed.result.tools.map((t) => ({
           name: t.name,
           description: t.description || '',
           inputSchema: t.inputSchema || { type: 'object', properties: {} },
           serverName: config.name,
         }));
       }
-    } catch { /* no tools */ }
+    } catch (_) { /* intentionally ignored: no tools in response */ }
 
     server.ready = true;
     servers.set(config.name, server);
-  } catch {
-    // Server failed to connect, skip it
+  } catch (_) {
+    /* intentionally ignored: server failed to connect, skip it */
   }
 }
 
@@ -204,8 +222,8 @@ async function connectHttpServer(config: McpServerConfig): Promise<void> {
 
     server.ready = true;
     servers.set(config.name, server);
-  } catch {
-    // Server unavailable
+  } catch (_) {
+    /* intentionally ignored: HTTP server unavailable, skip it */
   }
 }
 
@@ -260,18 +278,20 @@ export async function executeMcpTool(
 
       server.process.stdin?.write(request);
 
+      const execBuffer = new JsonRpcBuffer();
       const response = await new Promise<string>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error('MCP tool timeout')), 30000);
         const handler = (chunk: Buffer) => {
-          const data = chunk.toString().trim();
-          try {
-            const parsed = JSON.parse(data);
+          const messages = execBuffer.feed(chunk.toString());
+          for (const msg of messages) {
+            const parsed = msg as { result?: unknown; error?: { message: string } };
             if (parsed.result || parsed.error) {
               clearTimeout(timeout);
               server.process?.stdout?.removeListener('data', handler);
-              resolve(data);
+              resolve(JSON.stringify(msg));
+              return;
             }
-          } catch { /* partial data */ }
+          }
         };
         server.process?.stdout?.on('data', handler);
       });
@@ -318,7 +338,7 @@ export async function executeMcpTool(
 export function shutdownMcpServers(): void {
   for (const server of servers.values()) {
     if (server.process) {
-      try { server.process.kill(); } catch { /* ignore */ }
+      try { server.process.kill(); } catch (_) { /* intentionally ignored: process may already be dead */ }
     }
   }
   servers.clear();

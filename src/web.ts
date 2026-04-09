@@ -79,7 +79,7 @@ function webSearch(args: Record<string, unknown>): string {
             `${r.title}\n${r.url}\n${r.abstract}`
           ).join('\n\n');
         }
-      } catch { /* fallback failed */ }
+      } catch (_) { /* intentionally ignored: web fetch fallback failed */ }
 
       return `No results found for: "${query}". Try a different query or use web_fetch with a direct URL.`;
     }

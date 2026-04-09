@@ -44,7 +44,8 @@ export class KnowledgeLoader {
       });
       this.cache.set(cacheKey, workflow);
       return workflow;
-    } catch {
+    } catch (_) {
+      /* intentionally ignored: structured file unreadable or malformed */
       return undefined;
     }
   }
@@ -108,7 +109,8 @@ export class KnowledgeLoader {
       });
       this.cache.set(cacheKey, item);
       return item as T;
-    } catch {
+    } catch (_) {
+      /* intentionally ignored: structured file unreadable or malformed */
       return undefined;
     }
   }

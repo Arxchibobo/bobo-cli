@@ -72,14 +72,14 @@ function hasPuppeteer(): boolean {
   try {
     execSync('node -e "require(\'puppeteer\')"', { encoding: 'utf-8', timeout: 5000 });
     return true;
-  } catch { return false; }
+  } catch (_) { /* intentionally ignored: puppeteer not installed */ return false; }
 }
 
 function hasPlaywright(): boolean {
   try {
     execSync('node -e "require(\'playwright\')"', { encoding: 'utf-8', timeout: 5000 });
     return true;
-  } catch { return false; }
+  } catch (_) { /* intentionally ignored: playwright not installed */ return false; }
 }
 
 function screenshotWithPuppeteer(url: string, output: string, width: number, height: number, fullPage: boolean): string {

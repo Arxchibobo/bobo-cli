@@ -89,7 +89,8 @@ export function readSessionState(sessionId: string): SessionState | null {
   try {
     const content = readFileSync(contextPath, 'utf-8');
     return JSON.parse(content);
-  } catch {
+  } catch (_) {
+    /* intentionally ignored: state file missing or malformed */
     return null;
   }
 }
@@ -127,7 +128,8 @@ export function readActiveWorkflows(): WorkflowState[] {
   try {
     const content = readFileSync(path, 'utf-8');
     return JSON.parse(content);
-  } catch {
+  } catch (_) {
+    /* intentionally ignored: state file missing or malformed */
     return [];
   }
 }

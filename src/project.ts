@@ -43,7 +43,8 @@ export function loadProjectConfig(): { root: string; config: ProjectConfig } | n
   try {
     const config = JSON.parse(readFileSync(configPath, 'utf-8'));
     return { root, config };
-  } catch {
+  } catch (_) {
+    /* intentionally ignored: malformed project config */
     return { root, config: {} };
   }
 }

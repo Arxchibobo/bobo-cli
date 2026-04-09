@@ -189,7 +189,7 @@ function codemod(args: Record<string, unknown>): string {
         runHooks('post-edit', { BOBO_FILE: file });
         results.push(`  ✓ ${file}: ${matches.length} replacements`);
       }
-    } catch { /* skip unreadable */ }
+    } catch (_) { /* intentionally ignored: skip unreadable file */ }
   }
 
   const label = dryRun ? 'Would modify' : 'Modified';
@@ -217,7 +217,8 @@ function applyPatch(args: Record<string, unknown>): string {
     });
 
     return `Patch applied:\n${result.trim()}`;
-  } catch {
+  } catch (_) {
+    /* intentionally ignored: advanced tool execution failed */
     // Fallback: try patch command
     try {
       const result = execSync('patch -p1', {

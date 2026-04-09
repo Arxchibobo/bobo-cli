@@ -41,7 +41,8 @@ export function readProjectMemory(): ProjectMemory {
   }
   try {
     return JSON.parse(readFileSync(path, 'utf-8'));
-  } catch {
+  } catch (_) {
+    /* intentionally ignored: project memory file missing or malformed */
     return { version: 1, entries: [] };
   }
 }
@@ -94,7 +95,8 @@ export function readNotepad(): string {
   if (!existsSync(path)) return '';
   try {
     return readFileSync(path, 'utf-8');
-  } catch {
+  } catch (_) {
+    /* intentionally ignored: project memory file missing or malformed */
     return '';
   }
 }

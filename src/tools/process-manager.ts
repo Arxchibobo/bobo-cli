@@ -192,7 +192,7 @@ function bgStop(args: Record<string, unknown>): string {
     proc.process.kill('SIGTERM');
     // Force kill after 3s
     setTimeout(() => {
-      try { proc.process.kill('SIGKILL'); } catch { /* already dead */ }
+      try { proc.process.kill('SIGKILL'); } catch (_) { /* intentionally ignored: process already dead */ }
     }, 3000);
   }
 
@@ -235,7 +235,7 @@ export function executeProcessTool(name: string, args: Record<string, unknown>):
 export function killAllProcesses(): void {
   for (const [, proc] of processes) {
     if (proc.exitCode === null) {
-      try { proc.process.kill('SIGTERM'); } catch { /* ignore */ }
+      try { proc.process.kill('SIGTERM'); } catch (_) { /* intentionally ignored: process already dead */ }
     }
   }
   processes.clear();

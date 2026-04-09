@@ -211,35 +211,34 @@ function logDaily(entry: MemoryEntry): void {
  * Slim memory when it exceeds size limit
  */
 function slimMemory(content: string): string {
-  const lines = content.split('\n');
+  const sections = content.split(/(?=^## )/m);
   const result: string[] = [];
-  let inPermanentSection = false;
 
-  for (const line of lines) {
-    // Permanent sections - keep everything
-    if (line.includes('🔒') || line.includes('💼')) {
-      inPermanentSection = true;
-      result.push(line);
-      continue;
+  for (const section of sections) {
+    if (!section.trim()) continue;
+    if (section.includes('🔒') || section.includes('💼')) {
+      result.push(section.endsWith('\n') ? section : `${section}\n`);
+    } else if (section.includes('📋')) {
+      result.push(keepLastN(section, 5));
+    } else if (section.includes('💬')) {
+      result.push(keepLastN(section, 3));
+    } else if (section.includes('🔄')) {
+      result.push(keepLastN(section, 10));
+    } else {
+      result.push(keepLastN(section, 10));
     }
-
-    // New section starts
-    if (line.startsWith('## ')) {
-      inPermanentSection = false;
-      result.push(line);
-      continue;
-    }
-
-    if (inPermanentSection) {
-      result.push(line);
-      continue;
-    }
-
-    // For non-permanent sections, keep recent entries (last 10 per section)
-    result.push(line);
   }
 
-  return result.join('\n');
+  return result.join('');
+}
+
+function keepLastN(section: string, n: number): string {
+  const lines = section.split('\n');
+  const header = lines.filter(l => l.startsWith('## '));
+  const entries = lines.filter(l => l.startsWith('- '));
+  const other = lines.filter(l => !l.startsWith('## ') && !l.startsWith('- ') && l.trim());
+  const kept = entries.slice(-n);
+  return [...header, ...other, ...kept].join('\n') + '\n';
 }
 
 /**

@@ -102,9 +102,9 @@ function startPollingWatch(options: WatchOptions): void {
           } else {
             fileTimestamps.set(full, stat.mtimeMs);
           }
-        } catch { /* skip */ }
+        } catch (_) { /* intentionally ignored: skipped unreadable watched file */ }
       }
-    } catch { /* skip */ }
+    } catch (_) { /* intentionally ignored: watch cycle failure */ }
   }
 
   // Initial scan
