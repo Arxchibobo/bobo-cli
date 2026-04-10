@@ -35,7 +35,11 @@ export function prepareSpawn(request: SpawnRequest): SpawnResult {
 
   const agent = decision.agent;
 
-  const systemPrompt = buildAgentSystemPrompt(agent, request.task);
+  const systemPrompt = buildAgentSystemPrompt(
+    agent,
+    request.task,
+    decision.advisor ? { advisorRole: decision.advisor.advisorRole, maxUses: decision.advisor.maxUses } : undefined,
+  );
 
   return { decision, agent, systemPrompt };
 }
@@ -43,9 +47,28 @@ export function prepareSpawn(request: SpawnRequest): SpawnResult {
 /**
  * 构建 agent system prompt
  */
-function buildAgentSystemPrompt(agent: AgentDefinition, task: string): string {
+function buildAgentSystemPrompt(agent: AgentDefinition, task: string, advisorConfig?: { advisorRole: string; maxUses: number }): string {
   const boundaries = agent.boundaries.map(b => `- ${b}`).join('\n');
   const useCases = agent.useCases.map(u => `- ${u}`).join('\n');
+
+  let advisorBlock = '';
+  if (advisorConfig) {
+    advisorBlock = `
+## Advisor Strategy
+You have access to a ${advisorConfig.advisorRole} advisor (Opus-tier). Max ${advisorConfig.maxUses} calls.
+
+Call advisor BEFORE substantive work — before writing, before committing to an interpretation.
+If you need orientation first (finding files, reading code), do that, then call advisor.
+
+Also call advisor:
+- When you believe the task is complete (persist results first)
+- When stuck — errors recurring, approach not converging
+- When considering a change of approach
+
+Advisor gives direction only. It does not call tools or produce output.
+Give the advice serious weight. If evidence conflicts with advice, escalate once more to reconcile.
+`;
+  }
 
   return `# Role: ${agent.role} (${agent.description})
 
@@ -54,7 +77,7 @@ ${useCases}
 
 ## What you DON'T do
 ${boundaries}
-
+${advisorBlock}
 ## Task
 ${task}
 

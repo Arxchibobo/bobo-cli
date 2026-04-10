@@ -16,7 +16,8 @@
     "testing",
     "agents",
     "hooks",
-    "performance"
+    "performance",
+    "advisor-strategy"
   ],
   "skills": [
     "ab-test-setup",

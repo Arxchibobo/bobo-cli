@@ -30,6 +30,15 @@
 不可逆 & 高影响 → 确认后干
 ```
 
+### Advisor Escalation 判断
+```
+单轮简单任务 → 不要 advisor
+3-5 步中等任务 → 开头规划 + 结尾审视 (max_uses=2)
+6+  步复杂任务 → 开头 + 卡点 + 结尾 (max_uses=3)
+调试任务     → 每次方向变化时 (max_uses=1-3)
+```
+Advisor 只给方向，不执行工具。详见 `rules/advisor-strategy.md`
+
 ## 默认行为
 - 所有任务默认加载：system.md + rules.md
 - 中等以上复杂度追加：engineering.md

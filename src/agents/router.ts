@@ -4,8 +4,8 @@
  * 根据任务描述自动选择最合适的 agent 角色
  */
 
-import type { AgentDefinition } from './catalog.js';
-import { AGENT_CATALOG } from './catalog.js';
+import type { AgentDefinition, AdvisorCapability } from './catalog.js';
+import { AGENT_CATALOG, shouldUseAdvisor, selectAdvisorForExecutor } from './catalog.js';
 
 export type AgentRole = keyof typeof AGENT_CATALOG;
 
@@ -72,10 +72,21 @@ export interface RoutingDecision {
   model: 'haiku' | 'sonnet' | 'opus';
   agent: AgentDefinition;
   reason: string;
+  /** Advisor strategy config (when applicable) */
+  advisor?: {
+    /** Whether to use advisor for this task */
+    enabled: boolean;
+    /** Which agent role serves as advisor */
+    advisorRole: string;
+    /** Max advisor calls for cost control */
+    maxUses: number;
+    /** Advisor model tier */
+    advisorModel: 'opus';
+  };
 }
 
 /**
- * 完整路由决策（包含原因）
+ * 完整路由决策（包含原因 + advisor strategy）
  */
 export function routeTaskWithReason(task: string): RoutingDecision {
   const role = routeTask(task);
@@ -89,7 +100,51 @@ export function routeTaskWithReason(task: string): RoutingDecision {
     reason = 'Default role for implementation tasks';
   }
 
-  return { role, model, agent, reason };
+  // Determine task complexity for advisor strategy
+  const complexity = estimateComplexity(task);
+  const advisorDecision = shouldUseAdvisor(complexity);
+
+  let advisor: RoutingDecision['advisor'] = undefined;
+  if (advisorDecision.use && agent.advisorRole === 'executor-only') {
+    // Executor-type agents get an advisor assigned
+    const advisorRole = selectAdvisorForExecutor(role);
+    advisor = {
+      enabled: true,
+      advisorRole,
+      maxUses: advisorDecision.maxUses,
+      advisorModel: 'opus',
+    };
+  }
+
+  return { role, model, agent, reason, advisor };
+}
+
+/**
+ * Estimate task complexity from description
+ * 
+ * Simple: 1-2 steps (lookup, single edit, run command)
+ * Medium: 3-5 steps (add feature, fix bug, write script)
+ * Complex: 6+ steps (refactor, architecture, multi-file)
+ */
+function estimateComplexity(task: string): 'simple' | 'medium' | 'complex' {
+  const lower = task.toLowerCase();
+
+  const complexIndicators = [
+    'refactor', '重构', 'architecture', '架构',
+    'multiple', '多个', 'across', '跨',
+    'redesign', 'migrate', '迁移', 'overhaul',
+    'system', '系统', 'pipeline', '流水线',
+  ];
+  if (complexIndicators.some(i => lower.includes(i))) return 'complex';
+
+  const simpleIndicators = [
+    'find', '查找', 'search', '搜索',
+    'read', '读', 'check', '检查',
+    'list', '列出', 'show', '显示',
+  ];
+  if (simpleIndicators.some(i => lower.includes(i))) return 'simple';
+
+  return 'medium';
 }
 
 /**
