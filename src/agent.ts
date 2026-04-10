@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type {
   ChatCompletionMessageParam,
   ChatCompletionAssistantMessageParam,
+  ChatCompletionContentPart,
 } from 'openai/resources/index.js';
 import { loadConfig, type EffortLevel, type PermissionMode } from './config.js';
 import { loadKnowledge } from './knowledge.js';
@@ -49,6 +50,8 @@ export interface AgentOptions {
   model?: string;
   /** Callback when auto-compact is needed */
   onAutoCompact?: () => void;
+  /** Image attachments for multimodal input */
+  images?: Array<{ base64: string; mediaType: string }>;
 }
 
 /**
@@ -174,10 +177,21 @@ export async function runAgent(
     ...dynamicParts,
   ].join('\n\n---\n\n');
 
+  // Build user message content (text-only or multimodal)
+  const userContent: string | ChatCompletionContentPart[] = options.images?.length
+    ? [
+        ...options.images.map(img => ({
+          type: 'image_url' as const,
+          image_url: { url: `data:${img.mediaType};base64,${img.base64}` },
+        })),
+        { type: 'text' as const, text: userMessage },
+      ]
+    : userMessage;
+
   const messages: ChatCompletionMessageParam[] = [
     { role: 'system', content: systemPrompt },
     ...history,
-    { role: 'user', content: userMessage },
+    { role: 'user', content: userContent },
   ];
 
   let fullResponse = '';

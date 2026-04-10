@@ -29,6 +29,7 @@ import { formatCostReport } from './cost-tracker.js';
 import { getPreset, listPresets } from './providers.js';
 import { runDream, formatDreamResult, shouldAutoDream } from './dream.js';
 import { runVerification, formatVerificationResult } from './verification-agent.js';
+import { readImageFromFile, readImageFromClipboard, isImagePath, type ImageAttachment } from './image-input.js';
 import chalk from 'chalk';
 
 export interface ReplOptions {
@@ -145,11 +146,17 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
   let abortController: AbortController | null = null;
   let lastResponse = '';
   let autoCompactTriggered = false;
+  let pendingImages: ImageAttachment[] = [];
 
   // Wrapper that renders status bar before prompt
   const showPrompt = () => {
     const bar = renderStatusBar();
     if (bar) printLine(bar);
+    if (pendingImages.length > 0) {
+      rl.setPrompt(chalk.cyan(`📸[${pendingImages.length}] `) + chalk.green('> '));
+    } else {
+      rl.setPrompt(chalk.green('> '));
+    }
     rl.prompt();
   };
 
@@ -645,6 +652,82 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       continue;
     }
 
+    // ─── /image ───
+    if (input === '/image' || input.startsWith('/image ')) {
+      const arg = input.slice(6).trim();
+
+      if (!arg || arg === 'help') {
+        printLine(chalk.cyan('📸 Image commands:'));
+        printLine('  /image clipboard     Grab image from clipboard');
+        printLine('  /image <file path>   Attach a local image file');
+        printLine('  /image clear         Remove all pending images');
+        printLine('  /image status        Show pending images');
+        printLine('');
+        printLine(chalk.dim('  Attach image(s) then type your message. Images auto-clear after sending.'));
+        showPrompt();
+        continue;
+      }
+
+      if (arg === 'clear') {
+        pendingImages = [];
+        printSuccess('Cleared all pending images');
+        showPrompt();
+        continue;
+      }
+
+      if (arg === 'status') {
+        if (pendingImages.length === 0) {
+          printLine(chalk.dim('No pending images'));
+        } else {
+          printLine(chalk.cyan(`📸 ${pendingImages.length} image(s) pending:`));
+          for (const img of pendingImages) {
+            const sizeKB = Math.round(img.base64.length * 3 / 4 / 1024);
+            printLine(`  • ${img.source} (${img.mediaType}, ${sizeKB}KB)`);
+          }
+        }
+        showPrompt();
+        continue;
+      }
+
+      if (arg === 'clipboard') {
+        printLine(chalk.dim('Reading clipboard...'));
+        const img = readImageFromClipboard();
+        if (img) {
+          const sizeKB = Math.round(img.base64.length * 3 / 4 / 1024);
+          pendingImages.push(img);
+          printSuccess(`📸 Image from clipboard attached (${sizeKB}KB). Now type your message.`);
+        } else {
+          printError('No image found in clipboard');
+        }
+        showPrompt();
+        continue;
+      }
+
+      // Treat as file path
+      const img = readImageFromFile(arg);
+      if (img) {
+        const sizeKB = Math.round(img.base64.length * 3 / 4 / 1024);
+        pendingImages.push(img);
+        printSuccess(`📸 Image attached: ${img.source} (${sizeKB}KB). Now type your message.`);
+      } else {
+        printError(`Cannot read image: ${arg} (check path and format: png/jpg/gif/webp)`);
+      }
+      showPrompt();
+      continue;
+    }
+
+    // ─── Auto-detect dragged image file paths ───
+    if (isImagePath(input)) {
+      const img = readImageFromFile(input);
+      if (img) {
+        const sizeKB = Math.round(img.base64.length * 3 / 4 / 1024);
+        pendingImages.push(img);
+        printSuccess(`📸 Image attached: ${img.source} (${sizeKB}KB). Now type your message.`);
+        showPrompt();
+        continue;
+      }
+    }
+
     // ─── /help ───
     if (input === '/help') {
       printLine(chalk.cyan.bold('Commands:'));
@@ -666,6 +749,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       printLine('  /context     Context usage analysis');
       printLine('  /status      Session status');
       printLine('  /copy [n]    Copy last response to clipboard');
+      printLine('  /image       Attach image (clipboard or file path)');
       printLine('  /plan        Show current task plan');
       printLine('  /verify      Run verification agent');
       printLine('  /history     Show conversation turns');
@@ -703,6 +787,11 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
     }
 
     // ─── Run agent ───
+    // Show image indicator if pending
+    if (pendingImages.length > 0) {
+      printLine(chalk.cyan(`📸 Sending with ${pendingImages.length} image(s)...`));
+    }
+
     abortController = new AbortController();
     try {
       const result = await runAgent(input, history, {
@@ -711,6 +800,7 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
         model: currentModel,
         effort: currentEffort,
         permissionMode: currentPermissionMode,
+        images: pendingImages.length > 0 ? pendingImages : undefined,
         onAutoCompact: () => {
           if (!autoCompactTriggered) {
             autoCompactTriggered = true;
@@ -720,6 +810,9 @@ export async function startRepl(opts: ReplOptions): Promise<void> {
       });
       history = result.history;
       lastResponse = result.response;
+
+      // Clear pending images after successful send
+      pendingImages = [];
 
       // Auto-compact check
       const compactInfo = getCompactStatus(history);
