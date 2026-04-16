@@ -25,6 +25,7 @@ import { registerKnowledgeCommand } from './knowledge-commands.js';
 import { registerRulesCommand } from './rules-commands.js';
 import { registerStructuredSkillsCommand } from './structured-skills-commands.js';
 import { registerStructuredTemplateCommand } from './structured-template-commands.js';
+import { registerWikiCommand } from './wiki-commands.js';
 import { spawnSubAgent, listSubAgents, getSubAgent } from './sub-agents.js';
 import { initHooksTemplate } from './hooks.js';
 import { initMcpServers, shutdownMcpServers, getMcpStatus } from './mcp-client.js';
@@ -605,6 +606,7 @@ Keep changes minimal and focused. Do not break existing functionality.`;
   registerRulesCommand(program);
   registerStructuredSkillsCommand(program);
   registerStructuredTemplateCommand(program);
+  registerWikiCommand(program);
 
   // ─── Project subcommand ──────────────────────────────────────
   const projectCmd = program.command('project').description('Manage project configuration');
