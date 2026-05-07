@@ -14,6 +14,11 @@
 | E008 | 竞态条件 | 并发读写同一文件 | 锁 / 串行化 |
 | E009 | 默认分页 | API 只取了第一页 | 循环分页拉完再统计 |
 | E010 | rebase 丢代码 | 静默丢失改动 | push 前 `git diff HEAD~1` |
+| E011 | 投机抽象 | 单元素循环/永远打不到的default | 今天没用就不写 |
+| E012 | API payload 加多余字段 | 返回 PARAMS_INVALID | 最精简 payload 就过 |
+| E013 | 硬编码频道/ID | 发错频道/对象 | 复用 inbound metadata |
+| E014 | 假装验证通过 | 没跑命令就说PASS | 有输出的验证才算 |
+| E015 | 样本量不足下断言 | n<5 声称非单调/峰值 | ≥5 seeds 再定性 |
 
 ## 调试 Checklist
 

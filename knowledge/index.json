@@ -158,18 +158,24 @@
     "advanced-patterns",
     "agent-directives",
     "api-integration-patterns",
+    "code-review-protocol",
     "dream",
     "engineering",
     "error-catalog",
     "event-driven-architecture",
     "external-alignment",
+    "high-agency",
     "image-generation",
     "llm-wiki-pattern",
+    "long-task-management",
     "memory-management",
     "rules",
+    "self-evolution",
+    "self-rationalization-guard",
     "system",
     "task-router",
-    "verification"
+    "verification",
+    "worker-prompt-craft"
   ],
   "memory": [
     "cache-optimization-and-skill-integration",
@@ -182,7 +188,7 @@
     "totalRules": 16,
     "totalSkills": 125,
     "totalWorkflows": 6,
-    "totalKnowledge": 15,
+    "totalKnowledge": 21,
     "totalMemory": 5,
     "totalSize": "167 items"
   }
