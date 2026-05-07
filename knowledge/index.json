@@ -1,6 +1,6 @@
 {
-  "version": "1.0.0",
-  "extractedAt": "2026-04-01",
+  "version": "1.1.0",
+  "extractedAt": "2026-05-07",
   "rules": [
     "blocking-rules",
     "work-mode",
@@ -154,6 +154,23 @@
     "3d-viz",
     "data-pipeline"
   ],
+  "knowledge": [
+    "advanced-patterns",
+    "agent-directives",
+    "api-integration-patterns",
+    "dream",
+    "engineering",
+    "error-catalog",
+    "event-driven-architecture",
+    "external-alignment",
+    "image-generation",
+    "llm-wiki-pattern",
+    "memory-management",
+    "rules",
+    "system",
+    "task-router",
+    "verification"
+  ],
   "memory": [
     "cache-optimization-and-skill-integration",
     "engineering-patterns",
@@ -162,10 +179,11 @@
     "tools-and-services"
   ],
   "stats": {
-    "totalRules": 15,
+    "totalRules": 16,
     "totalSkills": 125,
     "totalWorkflows": 6,
+    "totalKnowledge": 15,
     "totalMemory": 5,
-    "totalSize": "151 items"
+    "totalSize": "167 items"
   }
 }
