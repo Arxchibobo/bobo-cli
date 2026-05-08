@@ -175,7 +175,8 @@
     "system",
     "task-router",
     "verification",
-    "worker-prompt-craft"
+    "worker-prompt-craft",
+    "two-repo-convergence"
   ],
   "memory": [
     "cache-optimization-and-skill-integration",
@@ -188,8 +189,8 @@
     "totalRules": 16,
     "totalSkills": 125,
     "totalWorkflows": 6,
-    "totalKnowledge": 21,
+    "totalKnowledge": 22,
     "totalMemory": 5,
-    "totalSize": "167 items"
+    "totalSize": "168 items"
   }
 }
