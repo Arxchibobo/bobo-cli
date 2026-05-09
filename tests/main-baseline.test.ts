@@ -1,11 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
 const cliPath = join(process.cwd(), 'dist', 'index.js');
 
 function runCli(args: string[]): string {
   return execFileSync(process.execPath, [cliPath, ...args], {
+    cwd: process.cwd(),
+    encoding: 'utf-8',
+  });
+}
+
+function runCliProcess(args: string[]) {
+  return spawnSync(process.execPath, [cliPath, ...args], {
     cwd: process.cwd(),
     encoding: 'utf-8',
   });
@@ -40,5 +47,12 @@ describe('main branch baseline CLI', () => {
   it('shows structured rules command', () => {
     const output = runCli(['rules', 'show', 'blocking-rules']);
     expect(output).toContain('致命阻塞规则');
+  });
+
+  it('keeps structured command startup free of provider dependency warnings', () => {
+    const result = runCliProcess(['kb', 'stats']);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain('DEP0040');
   });
 });

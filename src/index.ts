@@ -4,12 +4,9 @@ import { Command, Option } from 'commander';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { ChatCompletionMessageParam } from 'openai/resources/index.js';
-import { loadConfig, type EffortLevel, type PermissionMode } from './config.js';
-import { runAgent } from './agent.js';
+import type { EffortLevel, PermissionMode } from './config.js';
 import { printError } from './ui.js';
 import { registerCommands } from './cli.js';
-import { startRepl } from './repl.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 let version = '0.1.0';
@@ -66,6 +63,7 @@ program
         permissionMode,
       });
     } else {
+      const { startRepl } = await import('./repl.js');
       await startRepl({
         continueSession: opts.continue,
         resumeId: opts.resume,
@@ -106,6 +104,7 @@ async function runPrintMode(prompt: string, opts: ModeOptions): Promise<void> {
   }
 
   try {
+    const { runAgent } = await import('./agent.js');
     await runAgent(input, [], {
       quiet: false,
       model: opts.model,
@@ -124,6 +123,7 @@ async function runPrintMode(prompt: string, opts: ModeOptions): Promise<void> {
 
 async function runOneShot(prompt: string, opts: ModeOptions): Promise<void> {
   try {
+    const { runAgent } = await import('./agent.js');
     await runAgent(prompt, [], {
       model: opts.model,
       effort: opts.effort,

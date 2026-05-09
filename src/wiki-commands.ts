@@ -2,17 +2,11 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
-import {
-  initWiki,
-  ingestSource,
-  queryWiki,
-  lintWiki,
-  rebuildIndex,
-  searchWiki,
-  getWikiStats,
-  getRecentLogs,
-} from './wiki.js';
 import { printSuccess, printError, printLine, printWarning } from './ui.js';
+
+async function loadWikiModule() {
+  return import('./wiki.js');
+}
 
 export function registerWikiCommand(program: Command): void {
   const wiki = program
@@ -22,8 +16,9 @@ export function registerWikiCommand(program: Command): void {
   wiki
     .command('init')
     .description('Initialize .bobo/wiki/ directory structure')
-    .action(() => {
+    .action(async () => {
       try {
+        const { initWiki } = await loadWikiModule();
         const wikiDir = initWiki(process.cwd());
         printSuccess('Wiki initialized!');
         printLine(chalk.dim(`  Location: ${wikiDir}`));
@@ -53,6 +48,7 @@ export function registerWikiCommand(program: Command): void {
           printLine(chalk.dim(`Source: ${source}`));
         }
 
+        const { ingestSource } = await loadWikiModule();
         const result = await ingestSource(source, { wikiDir, verbose: opts.verbose });
 
         printSuccess('Ingestion complete!');
@@ -89,6 +85,7 @@ export function registerWikiCommand(program: Command): void {
 
         printLine(chalk.cyan.bold('\n🔍 Querying wiki...\n'));
 
+        const { queryWiki } = await loadWikiModule();
         const result = await queryWiki(question, { wikiDir, verbose: opts.verbose });
 
         printLine(chalk.bold('Answer:'));
@@ -121,6 +118,7 @@ export function registerWikiCommand(program: Command): void {
 
         printLine(chalk.cyan.bold('\n🔧 Linting wiki...\n'));
 
+        const { lintWiki } = await loadWikiModule();
         const result = await lintWiki(wikiDir);
 
         if (result.issues.length === 0) {
@@ -168,6 +166,7 @@ export function registerWikiCommand(program: Command): void {
           process.exit(1);
         }
 
+        const { rebuildIndex } = await loadWikiModule();
         await rebuildIndex(wikiDir);
         printSuccess('Index rebuilt!');
         printLine(chalk.dim(`  Location: ${join(wikiDir, 'index.md')}`));
@@ -180,7 +179,7 @@ export function registerWikiCommand(program: Command): void {
   wiki
     .command('stats')
     .description('Show wiki statistics')
-    .action(() => {
+    .action(async () => {
       try {
         const wikiDir = join(process.cwd(), '.bobo', 'wiki');
         if (!existsSync(wikiDir)) {
@@ -188,6 +187,7 @@ export function registerWikiCommand(program: Command): void {
           process.exit(1);
         }
 
+        const { getWikiStats } = await loadWikiModule();
         const stats = getWikiStats(wikiDir);
 
         printLine(chalk.cyan.bold('\n📊 Wiki Statistics\n'));
@@ -213,7 +213,7 @@ export function registerWikiCommand(program: Command): void {
   wiki
     .command('search <keyword>')
     .description('Search wiki pages by keyword')
-    .action((keyword: string) => {
+    .action(async (keyword: string) => {
       try {
         const wikiDir = join(process.cwd(), '.bobo', 'wiki');
         if (!existsSync(wikiDir)) {
@@ -221,6 +221,7 @@ export function registerWikiCommand(program: Command): void {
           process.exit(1);
         }
 
+        const { searchWiki } = await loadWikiModule();
         const results = searchWiki(keyword, wikiDir);
 
         if (results.length === 0) {
@@ -252,7 +253,7 @@ export function registerWikiCommand(program: Command): void {
   wiki
     .command('log [n]')
     .description('Show recent N log entries (default: 10)')
-    .action((n?: string) => {
+    .action(async (n?: string) => {
       try {
         const wikiDir = join(process.cwd(), '.bobo', 'wiki');
         if (!existsSync(wikiDir)) {
@@ -261,6 +262,7 @@ export function registerWikiCommand(program: Command): void {
         }
 
         const count = n ? parseInt(n, 10) : 10;
+        const { getRecentLogs } = await loadWikiModule();
         const logs = getRecentLogs(wikiDir, count);
 
         if (logs.length === 0) {

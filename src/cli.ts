@@ -30,8 +30,6 @@ import { spawnSubAgent, listSubAgents, getSubAgent } from './sub-agents.js';
 import { initHooksTemplate } from './hooks.js';
 import { initMcpServers, shutdownMcpServers, getMcpStatus } from './mcp-client.js';
 import { startWatch } from './watcher.js';
-import { runAutonomous } from './autonomous.js';
-import { runTeamWorkflow, runPlanWorkflow, runVerifyWorkflow, runInterviewWorkflow, runAskWorkflow } from './workflows/index.js';
 import { getAllAgentRoles, getAgentsByLane, AGENT_CATALOG } from './agents/catalog.js';
 import { listSpawnableRoles } from './agents/spawn.js';
 import { recoverContext, buildRecoveryPrompt } from './state/recovery.js';
@@ -376,6 +374,7 @@ export function registerCommands(program: Command): void {
         printError(`Invalid role: ${roleRaw}. Available: ${roles.join(', ')}`);
         process.exit(1);
       }
+      const { runTeamWorkflow } = await import('./workflows/team.js');
       const result = await runTeamWorkflow(task, teamSize, roleRaw as never);
       printSuccess(result.summary);
       printLine(`Plan: ${result.planPath}`);
@@ -390,6 +389,7 @@ export function registerCommands(program: Command): void {
     .command('plan <task>')
     .description('Generate a structured execution plan using planner agent')
     .action(async (task: string) => {
+      const { runPlanWorkflow } = await import('./workflows/plan.js');
       const result = await runPlanWorkflow(task);
       printSuccess(`Plan created with ${result.role} (${result.model})`);
       printLine(`Plan: ${result.path}`);
@@ -402,6 +402,7 @@ export function registerCommands(program: Command): void {
     .command('verify [target]')
     .description('Run adversarial verification (build/test/lint checks)')
     .action(async (target?: string) => {
+      const { runVerifyWorkflow } = await import('./workflows/verify.js');
       const result = await runVerifyWorkflow(target);
       const icon = result.verdict === 'PASS' ? '✓' : result.verdict === 'FAIL' ? '✗' : '◐';
       printSuccess(`Verification ${icon} ${result.verdict}`);
@@ -412,6 +413,7 @@ export function registerCommands(program: Command): void {
     .command('interview <topic>')
     .description('Generate Socratic interview questions for a topic')
     .action(async (topic: string) => {
+      const { runInterviewWorkflow } = await import('./workflows/interview.js');
       const result = await runInterviewWorkflow(topic);
       printSuccess('Interview questions generated');
       printLine(`Report: ${result.path}`);
@@ -426,6 +428,7 @@ export function registerCommands(program: Command): void {
     .command('ask <model> <prompt>')
     .description('Query a specific AI model (provider name or model ID)')
     .action(async (model: string, prompt: string) => {
+      const { runAskWorkflow } = await import('./workflows/ask.js');
       const result = await runAskWorkflow(model, prompt);
       if (result.error) {
         printError(`Ask failed: ${result.error}`);
@@ -464,6 +467,7 @@ export function registerCommands(program: Command): void {
     .option('--max-iterations <n>', 'Maximum iterations', '5')
     .option('--log <path>', 'Log file path')
     .action(async (task: string, opts: { model?: string; effort?: string; maxIterations?: string; log?: string }) => {
+      const { runAutonomous } = await import('./autonomous.js');
       await runAutonomous({
         task,
         model: opts.model,

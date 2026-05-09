@@ -297,6 +297,7 @@ export async function runAgent(
         if (choice?.message?.tool_calls) {
           for (let idx = 0; idx < choice.message.tool_calls.length; idx++) {
             const tc = choice.message.tool_calls[idx];
+            if (tc.type !== 'function') continue;
             toolCalls.set(idx, {
               id: tc.id,
               name: tc.function.name,

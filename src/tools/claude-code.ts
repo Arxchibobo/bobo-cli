@@ -15,7 +15,8 @@
  */
 
 import { execSync, spawn, type ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { statSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
 import type { ChatCompletionTool } from 'openai/resources/index.js';
 
 // ─── Tool Definitions ────────────────────────────────────────
@@ -87,22 +88,41 @@ Use for iterative development that needs multiple rounds.`,
 
 let claudeCodePath: string | null = null;
 
+function hasExecutableOnPath(command: string): boolean {
+  const pathDirs = (process.env.PATH || '').split(delimiter).filter(Boolean);
+  const extensions = process.platform === 'win32'
+    ? (process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM').split(';').filter(Boolean)
+    : [''];
+  const names = process.platform === 'win32' && !/\.[^\\/]+$/.test(command)
+    ? extensions.map(ext => command + ext.toLowerCase())
+    : [command];
+
+  for (const dir of pathDirs) {
+    for (const name of names) {
+      try {
+        const stat = statSync(join(dir, name));
+        if (stat.isFile() && (process.platform === 'win32' || (stat.mode & 0o111) !== 0)) {
+          return true;
+        }
+      } catch (_) {
+        /* intentionally ignored: candidate does not exist or is unreadable */
+      }
+    }
+  }
+
+  return false;
+}
+
 function findClaudeCode(): string | null {
   if (claudeCodePath !== null) return claudeCodePath;
 
   // Try common paths
   const candidates = ['claude', 'claude-code'];
   for (const cmd of candidates) {
-    try {
-      const result = execSync(`which ${cmd} 2>/dev/null || where ${cmd} 2>nul`, {
-        encoding: 'utf-8',
-        timeout: 5000,
-      }).trim();
-      if (result) {
-        claudeCodePath = cmd;
-        return cmd;
-      }
-    } catch (_) { /* intentionally ignored: claude-code binary not found */ }
+    if (hasExecutableOnPath(cmd)) {
+      claudeCodePath = cmd;
+      return cmd;
+    }
   }
 
   claudeCodePath = '';
