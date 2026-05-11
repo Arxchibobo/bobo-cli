@@ -12,7 +12,7 @@
  */
 
 import { runHooks } from './hooks.js';
-import { resolve } from 'node:path';
+import { validatePath, validateShellCommand, SafetyError } from './tools/safety.js';
 
 /**
  * Risk levels for tool operations.
@@ -177,6 +177,36 @@ const toolMetadataRegistry: Record<string, ToolMetadata> = {
     isConcurrencySafe: false,
     riskLevel: 'dangerous',
   },
+  bg_start: {
+    name: 'bg_start',
+    isReadOnly: false,
+    isConcurrencySafe: false,
+    riskLevel: 'dangerous',
+  },
+  multi_edit: {
+    name: 'multi_edit',
+    isReadOnly: false,
+    isConcurrencySafe: false,
+    riskLevel: 'moderate',
+  },
+  batch_write: {
+    name: 'batch_write',
+    isReadOnly: false,
+    isConcurrencySafe: false,
+    riskLevel: 'moderate',
+  },
+  codemod: {
+    name: 'codemod',
+    isReadOnly: false,
+    isConcurrencySafe: false,
+    riskLevel: 'dangerous',
+  },
+  apply_patch: {
+    name: 'apply_patch',
+    isReadOnly: false,
+    isConcurrencySafe: false,
+    riskLevel: 'dangerous',
+  },
 };
 
 /**
@@ -199,72 +229,84 @@ export function registerToolMetadata(metadata: ToolMetadata): void {
 }
 
 /**
- * Validate tool inputs against schema.
+ * Tools that take a path parameter and must stay within the working dir.
+ * The list intentionally includes sibling/advanced tools that the previous
+ * version of this validator missed (multi_edit, batch_write, codemod,
+ * apply_patch). Defense-in-depth — each tool also calls validatePath()
+ * directly via safeResolvePath() in the safety layer.
+ */
+const PATH_TOOLS = new Set<string>([
+  'read_file', 'write_file', 'edit_file', 'list_directory',
+]);
+const SHELL_TOOLS = new Set<string>([
+  'shell', 'bg_start',
+]);
+
+/**
+ * Validate tool inputs at the governance entry point. Path containment and
+ * shell-command pattern checks delegate to the shared safety layer so the
+ * rules cannot drift between governance and tool implementations.
  */
 function validateToolInputs(toolName: string, args: Record<string, unknown>): {
   valid: boolean;
   error?: string;
 } {
-  // Basic validation - can be extended with JSON schema validation
-  switch (toolName) {
-    case 'read_file':
-    case 'write_file':
-    case 'edit_file': {
-      if (!args.path || typeof args.path !== 'string') {
-        return { valid: false, error: 'Missing or invalid "path" parameter' };
-      }
-      const pathArg = args.path as string;
-      if (pathArg.includes('\0')) {
-        return { valid: false, error: 'Path contains null bytes' };
-      }
-      if (pathArg.includes('..')) {
-        return { valid: false, error: 'Path traversal not allowed' };
-      }
-      if (pathArg.startsWith('/')) {
-        const cwd = process.cwd();
-        const resolved = resolve(pathArg);
-        if (resolved !== cwd && !resolved.startsWith(`${cwd}/`)) {
-          return { valid: false, error: 'Absolute path outside working directory not allowed' };
-        }
-      }
-      if (toolName === 'edit_file' && (!args.oldText || !args.newText)) {
-        return { valid: false, error: 'Missing "oldText" or "newText" parameter' };
-      }
-      break;
+  if (PATH_TOOLS.has(toolName)) {
+    if (toolName === 'edit_file' && (!args.oldText || !args.newText)) {
+      return { valid: false, error: 'Missing "oldText" or "newText" parameter' };
     }
+    // list_directory's path is optional — only validate when supplied.
+    if (toolName === 'list_directory' && (args.path === undefined || args.path === null || args.path === '')) {
+      return { valid: true };
+    }
+    if (typeof args.path !== 'string' || args.path.length === 0) {
+      return { valid: false, error: 'Missing or invalid "path" parameter' };
+    }
+    try {
+      validatePath(args.path);
+    } catch (e) {
+      return { valid: false, error: (e as SafetyError).message };
+    }
+    return { valid: true };
+  }
 
-    case 'shell':
-      if (!args.command || typeof args.command !== 'string') {
-        return { valid: false, error: 'Missing or invalid "command" parameter' };
-      }
-      // Check for dangerous patterns
-      const cmd = args.command as string;
-      const dangerousPatterns: Array<{ pattern: RegExp; reason: string }> = [
-        { pattern: /rm\s+-rf\s+\/(?:\s|$)/, reason: 'rm -rf / blocked' },
-        { pattern: /rm\s+-rf\s+~/, reason: 'rm -rf ~ blocked' },
-        { pattern: /rm\s+-rf\s+\$HOME/, reason: 'rm -rf $HOME blocked' },
-        { pattern: /mkfs/, reason: 'mkfs blocked' },
-        { pattern: /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/, reason: 'Fork bomb blocked' },
-        { pattern: /curl\s.*\|\s*(bash|sh|zsh)/, reason: 'Pipe-to-shell blocked' },
-        { pattern: /wget\s.*\|\s*(bash|sh|zsh)/, reason: 'Pipe-to-shell blocked' },
-        { pattern: /curl\s.*\|\s*sudo/, reason: 'Pipe-to-sudo blocked' },
-        { pattern: /wget\s.*\|\s*sudo/, reason: 'Pipe-to-sudo blocked' },
-        { pattern: /chmod\s+777/, reason: 'chmod 777 blocked' },
-        { pattern: /dd\s+if=/, reason: 'dd blocked (disk destruction risk)' },
-        { pattern: />\s*\/dev\/sd[a-z]/, reason: 'Direct disk write blocked' },
-        { pattern: /\bshutdown\b/, reason: 'shutdown blocked' },
-        { pattern: /\breboot\b/, reason: 'reboot blocked' },
-        { pattern: /\bhalt\b/, reason: 'halt blocked' },
-        { pattern: /\bpkill\b/, reason: 'pkill blocked' },
-        { pattern: /\bkillall\b/, reason: 'killall blocked' },
-      ];
-      for (const { pattern, reason } of dangerousPatterns) {
-        if (pattern.test(cmd)) {
-          return { valid: false, error: `Dangerous command blocked: ${reason}` };
-        }
-      }
-      break;
+  if (SHELL_TOOLS.has(toolName)) {
+    try {
+      validateShellCommand(args.command);
+    } catch (e) {
+      return { valid: false, error: (e as SafetyError).message };
+    }
+    return { valid: true };
+  }
 
+  // Composite tools: peek into nested arrays of paths.
+  if (toolName === 'multi_edit') {
+    const edits = args.edits as Array<{ path?: unknown }> | undefined;
+    if (!Array.isArray(edits) || edits.length === 0) {
+      return { valid: false, error: 'multi_edit.edits must be a non-empty array' };
+    }
+    for (const edit of edits) {
+      try {
+        validatePath(edit?.path);
+      } catch (e) {
+        return { valid: false, error: (e as SafetyError).message };
+      }
+    }
+    return { valid: true };
+  }
+  if (toolName === 'batch_write') {
+    const files = args.files as Array<{ path?: unknown }> | undefined;
+    if (!Array.isArray(files) || files.length === 0) {
+      return { valid: false, error: 'batch_write.files must be a non-empty array' };
+    }
+    for (const file of files) {
+      try {
+        validatePath(file?.path);
+      } catch (e) {
+        return { valid: false, error: (e as SafetyError).message };
+      }
+    }
+    return { valid: true };
   }
 
   return { valid: true };

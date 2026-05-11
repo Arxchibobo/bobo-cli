@@ -146,7 +146,7 @@ export async function ingestSource(
   if (source.startsWith('http://') || source.startsWith('https://')) {
     // Fetch URL
     if (verbose) console.log(`Fetching ${source}...`);
-    content = executeWebTool('web_fetch', { url: source, maxChars: 10000 });
+    content = await executeWebTool('web_fetch', { url: source, maxChars: 10000 });
     sourceName = sanitizeFilename(new URL(source).hostname + '-' + Date.now());
   } else {
     // Read local file

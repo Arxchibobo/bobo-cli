@@ -12,6 +12,14 @@ export class Spinner {
   private message = '';
 
   start(message: string): void {
+    // Idempotent: clear any previously-set interval so repeated start()
+    // calls (or start() after a thrown error path skipped stop()) don't
+    // leak timers and pin the event loop open until process exit.
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+
     this.message = message;
     this.startTime = Date.now();
     this.frameIndex = 0;

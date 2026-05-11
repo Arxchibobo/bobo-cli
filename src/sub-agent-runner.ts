@@ -9,7 +9,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { runAgent } from './agent.js';
 import { runVerification, formatVerificationResult } from './verification-agent.js';
 import type { AgentRole } from './sub-agents.js';
-import { getRolePromptInjection } from './sub-agents.js';
+import { getRolePromptInjection, getAllowedToolsForRole } from './sub-agents.js';
 
 interface SubAgentTask {
   id: string;
@@ -59,11 +59,17 @@ async function main(): Promise<void> {
       taskData.status = verificationResult.verdict === 'FAIL' ? 'failed' : 'completed';
       taskData.result = formatVerificationResult(verificationResult);
     } else {
-      // Inject role-specific prompt
+      // Inject role-specific prompt AND restrict to the role's allowed
+      // tools. The prompt is advisory; the allowedTools list is the
+      // actual enforcement (filters definitions + hard-rejects calls).
       const rolePrompt = getRolePromptInjection(role);
       const enhancedTask = rolePrompt ? `${rolePrompt}\n\n---\n\n${taskData.task}` : taskData.task;
+      const allowedTools = getAllowedToolsForRole(role);
 
-      const result = await runAgent(enhancedTask, [], { quiet: true });
+      const result = await runAgent(enhancedTask, [], {
+        quiet: true,
+        allowedTools,
+      });
       taskData.status = 'completed';
       taskData.result = result.response;
     }

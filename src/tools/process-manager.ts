@@ -8,6 +8,7 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { ChatCompletionTool } from 'openai/resources/index.js';
+import { safeResolvePath, validateShellCommand, SafetyError } from './safety.js';
 
 interface ManagedProcess {
   id: string;
@@ -99,8 +100,14 @@ export const processToolDefinitions: ChatCompletionTool[] = [
 // ─── Implementations ─────────────────────────────────────────
 
 function bgStart(args: Record<string, unknown>): string {
-  const command = args.command as string;
-  const cwd = args.cwd as string || process.cwd();
+  let command: string;
+  let cwd: string;
+  try {
+    command = validateShellCommand(args.command);
+    cwd = args.cwd ? safeResolvePath(args.cwd) : process.cwd();
+  } catch (e) {
+    return `bg_start blocked: ${(e as SafetyError).message}`;
+  }
   const label = args.label as string || `proc-${nextId}`;
 
   const id = `bg-${nextId++}`;

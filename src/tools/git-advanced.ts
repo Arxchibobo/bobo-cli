@@ -1,11 +1,12 @@
 /**
  * Enhanced Git tools — PR workflow, branch management, stash.
- * Solves: "Git 操作较基础"
+ * All git invocations go through `runGit()` (arg array, no shell) and
+ * `gh` invocations go through `runProgram()`. Never interpolate LLM
+ * input into a shell command.
  */
 
-import { execSync } from 'node:child_process';
-import { resolve } from 'node:path';
 import type { ChatCompletionTool } from 'openai/resources/index.js';
+import { runGit, runProgram } from './safety.js';
 
 export const gitAdvancedToolDefinitions: ChatCompletionTool[] = [
   {
@@ -103,32 +104,49 @@ export const gitAdvancedToolDefinitions: ChatCompletionTool[] = [
 
 // ─── Implementations ─────────────────────────────────────────
 
-function run(cmd: string, timeout = 15000): string {
-  try {
-    return execSync(cmd, { encoding: 'utf-8', timeout, stdio: ['pipe', 'pipe', 'pipe'] }).trim();
-  } catch (e: unknown) {
-    const err = e as { stdout?: string; stderr?: string };
-    const output = ((err.stderr || '') + '\n' + (err.stdout || '')).trim();
-    return output || (e as Error).message;
+/**
+ * git refs (branches, tags, commits) follow a defined character set —
+ * reject anything with shell metacharacters or whitespace before passing
+ * to git. This is belt-and-suspenders since we never go through a shell
+ * anyway, but a malformed name will at least produce a clear error rather
+ * than confusing git.
+ */
+function assertValidRef(name: unknown, label: string): string {
+  if (typeof name !== 'string' || name.length === 0) {
+    throw new Error(`Missing ${label}`);
   }
+  // Allow alphanumerics, dash, underscore, slash, dot, plus the @{...}
+  // syntax used by reflog refs. Reject everything else.
+  if (!/^[A-Za-z0-9._\-/@{}+~^:]+$/.test(name)) {
+    throw new Error(`Invalid ${label}: ${name}`);
+  }
+  return name;
+}
+
+function format(result: { ok: boolean; output: string }): string {
+  return result.output || (result.ok ? '(no output)' : 'git failed');
 }
 
 function gitBranch(args: Record<string, unknown>): string {
   const action = args.action as string;
-  const name = args.name as string;
 
   switch (action) {
     case 'list':
-      return run('git branch -a --sort=-committerdate');
+      return format(runGit(['branch', '-a', '--sort=-committerdate']));
     case 'create': {
-      const from = args.from as string || '';
-      const base = from ? ` ${from}` : '';
-      return run(`git checkout -b ${name}${base}`);
+      const name = assertValidRef(args.name, 'branch name');
+      const from = args.from ? assertValidRef(args.from, 'base branch') : null;
+      const argv = from ? ['checkout', '-b', name, from] : ['checkout', '-b', name];
+      return format(runGit(argv));
     }
-    case 'switch':
-      return run(`git checkout ${name}`);
-    case 'delete':
-      return run(`git branch -d ${name}`);
+    case 'switch': {
+      const name = assertValidRef(args.name, 'branch name');
+      return format(runGit(['checkout', name]));
+    }
+    case 'delete': {
+      const name = assertValidRef(args.name, 'branch name');
+      return format(runGit(['branch', '-d', name]));
+    }
     default:
       return `Unknown action: ${action}`;
   }
@@ -138,48 +156,69 @@ function gitStash(args: Record<string, unknown>): string {
   const action = args.action as string;
   switch (action) {
     case 'push': {
-      const msg = args.message as string;
-      return msg ? run(`git stash push -m "${msg}"`) : run('git stash push');
+      const msg = args.message as string | undefined;
+      const argv = msg ? ['stash', 'push', '-m', msg] : ['stash', 'push'];
+      return format(runGit(argv));
     }
-    case 'pop': return run('git stash pop');
-    case 'list': return run('git stash list') || '(no stashes)';
-    case 'drop': return run('git stash drop');
-    default: return `Unknown action: ${action}`;
+    case 'pop':
+      return format(runGit(['stash', 'pop']));
+    case 'list':
+      return format(runGit(['stash', 'list'])) || '(no stashes)';
+    case 'drop':
+      return format(runGit(['stash', 'drop']));
+    default:
+      return `Unknown action: ${action}`;
   }
 }
 
 function gitPr(args: Record<string, unknown>): string {
   const title = args.title as string;
-  const body = args.body as string || '';
-  const base = args.base as string || 'main';
-  const draft = args.draft as boolean || false;
+  const body = (args.body as string) || '';
+  const base = args.base ? assertValidRef(args.base, 'base branch') : 'main';
+  const draft = (args.draft as boolean) || false;
 
-  let cmd = `gh pr create --title "${title.replace(/"/g, '\\"')}" --base ${base}`;
-  if (body) cmd += ` --body "${body.replace(/"/g, '\\"')}"`;
-  if (draft) cmd += ' --draft';
+  if (typeof title !== 'string' || title.length === 0) {
+    return 'Missing PR title';
+  }
 
-  return run(cmd, 30000);
+  const argv = ['pr', 'create', '--title', title, '--base', base];
+  if (body) argv.push('--body', body);
+  if (draft) argv.push('--draft');
+
+  return format(runProgram('gh', argv, { timeout: 30000 }));
 }
 
 function gitPrList(args: Record<string, unknown>): string {
-  const state = args.state as string || 'open';
-  const limit = args.limit as number || 10;
-  return run(`gh pr list --state ${state} --limit ${limit}`);
+  const state = (args.state as string) || 'open';
+  if (!['open', 'closed', 'merged', 'all'].includes(state)) {
+    return `Invalid state: ${state}`;
+  }
+  const limit = (args.limit as number) || 10;
+  if (!Number.isFinite(limit) || limit <= 0 || limit > 100) {
+    return 'Invalid limit (must be 1–100)';
+  }
+  return format(runProgram('gh', ['pr', 'list', '--state', state, '--limit', String(limit)]));
 }
 
 function gitMerge(args: Record<string, unknown>): string {
-  const branch = args.branch as string;
-  const strategy = args.strategy as string || 'merge';
+  const branch = assertValidRef(args.branch, 'branch');
+  const strategy = (args.strategy as string) || 'merge';
 
   switch (strategy) {
-    case 'squash': return run(`git merge --squash ${branch}`);
-    case 'rebase': return run(`git rebase ${branch}`);
-    default: return run(`git merge ${branch}`);
+    case 'squash':
+      return format(runGit(['merge', '--squash', branch]));
+    case 'rebase':
+      return format(runGit(['rebase', branch]));
+    case 'merge':
+      return format(runGit(['merge', branch]));
+    default:
+      return `Unknown strategy: ${strategy}`;
   }
 }
 
 function gitCherryPick(args: Record<string, unknown>): string {
-  return run(`git cherry-pick ${args.commit as string}`);
+  const commit = assertValidRef(args.commit, 'commit');
+  return format(runGit(['cherry-pick', commit]));
 }
 
 // ─── Executor ────────────────────────────────────────────────
@@ -189,13 +228,17 @@ export function isGitAdvancedTool(name: string): boolean {
 }
 
 export function executeGitAdvancedTool(name: string, args: Record<string, unknown>): string {
-  switch (name) {
-    case 'git_branch': return gitBranch(args);
-    case 'git_stash': return gitStash(args);
-    case 'git_pr': return gitPr(args);
-    case 'git_pr_list': return gitPrList(args);
-    case 'git_merge': return gitMerge(args);
-    case 'git_cherry_pick': return gitCherryPick(args);
-    default: return `Unknown git tool: ${name}`;
+  try {
+    switch (name) {
+      case 'git_branch': return gitBranch(args);
+      case 'git_stash': return gitStash(args);
+      case 'git_pr': return gitPr(args);
+      case 'git_pr_list': return gitPrList(args);
+      case 'git_merge': return gitMerge(args);
+      case 'git_cherry_pick': return gitCherryPick(args);
+      default: return `Unknown git tool: ${name}`;
+    }
+  } catch (e) {
+    return `Git tool error: ${(e as Error).message}`;
   }
 }

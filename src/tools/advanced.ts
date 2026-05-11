@@ -8,10 +8,11 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { dirname } from 'node:path';
 import { execSync } from 'node:child_process';
 import { glob } from 'glob';
 import { runHooks } from '../hooks.js';
+import { safeResolvePath, SafetyError } from './safety.js';
 import type { ChatCompletionTool } from 'openai/resources/index.js';
 
 // ─── Tool Definitions ────────────────────────────────────────
@@ -121,10 +122,6 @@ export const advancedToolDefinitions: ChatCompletionTool[] = [
 
 // ─── Tool Implementations ────────────────────────────────────
 
-function resolvePath(p: string): string {
-  return resolve(process.cwd(), p);
-}
-
 function multiEdit(args: Record<string, unknown>): string {
   const edits = args.edits as Array<{ path: string; oldText: string; newText: string }>;
   if (!edits || edits.length === 0) return 'No edits provided';
@@ -133,15 +130,26 @@ function multiEdit(args: Record<string, unknown>): string {
   let successCount = 0;
 
   for (const edit of edits) {
-    const filePath = resolvePath(edit.path);
+    let filePath: string;
+    try {
+      filePath = safeResolvePath(edit.path);
+    } catch (e) {
+      results.push(`✗ ${edit.path}: ${(e as SafetyError).message}`);
+      continue;
+    }
     if (!existsSync(filePath)) {
       results.push(`✗ ${edit.path}: file not found`);
       continue;
     }
 
     const content = readFileSync(filePath, 'utf-8');
-    if (!content.includes(edit.oldText)) {
+    const occurrences = content.split(edit.oldText).length - 1;
+    if (occurrences === 0) {
       results.push(`✗ ${edit.path}: oldText not found`);
+      continue;
+    }
+    if (occurrences > 1) {
+      results.push(`✗ ${edit.path}: oldText matches ${occurrences} times — provide more context`);
       continue;
     }
 
@@ -162,16 +170,30 @@ function codemod(args: Record<string, unknown>): string {
   const replace = args.replace as string;
   const dryRun = args.dryRun as boolean || false;
 
+  // glob.sync with absolute:false returns paths relative to cwd, so each
+  // result is naturally inside cwd; we still validate to defend against
+  // glob libraries that may return absolute paths for symlinked entries.
   const files = glob.sync(pattern, { cwd: process.cwd(), nodir: true });
   if (files.length === 0) return `No files match: ${pattern}`;
 
-  const regex = new RegExp(search, 'g');
+  let regex: RegExp;
+  try {
+    regex = new RegExp(search, 'g');
+  } catch (e) {
+    return `Invalid regex: ${(e as Error).message}`;
+  }
+
   const results: string[] = [];
   let totalMatches = 0;
   let totalFiles = 0;
 
   for (const file of files) {
-    const filePath = resolvePath(file);
+    let filePath: string;
+    try {
+      filePath = safeResolvePath(file);
+    } catch (_) {
+      continue; // glob produced something outside cwd — skip
+    }
     try {
       const content = readFileSync(filePath, 'utf-8');
       const matches = content.match(regex);
@@ -198,7 +220,12 @@ function codemod(args: Record<string, unknown>): string {
 
 function applyPatch(args: Record<string, unknown>): string {
   const patch = args.patch as string;
-  const cwd = args.cwd ? resolvePath(args.cwd as string) : process.cwd();
+  let cwd: string;
+  try {
+    cwd = args.cwd ? safeResolvePath(args.cwd as string) : process.cwd();
+  } catch (e) {
+    return `Patch failed: ${(e as SafetyError).message}`;
+  }
 
   try {
     // Try using git apply
@@ -273,17 +300,25 @@ function batchWrite(args: Record<string, unknown>): string {
   if (!files || files.length === 0) return 'No files provided';
 
   const results: string[] = [];
+  let successCount = 0;
   for (const file of files) {
-    const filePath = resolvePath(file.path);
+    let filePath: string;
+    try {
+      filePath = safeResolvePath(file.path);
+    } catch (e) {
+      results.push(`✗ ${file.path}: ${(e as SafetyError).message}`);
+      continue;
+    }
     const dir = dirname(filePath);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     runHooks('pre-edit', { BOBO_FILE: file.path });
     writeFileSync(filePath, file.content);
     runHooks('post-edit', { BOBO_FILE: file.path });
     results.push(`✓ ${file.path} (${file.content.length} bytes)`);
+    successCount++;
   }
 
-  return `Wrote ${files.length} files:\n${results.join('\n')}`;
+  return `Wrote ${successCount}/${files.length} files:\n${results.join('\n')}`;
 }
 
 // ─── Executor ────────────────────────────────────────────────

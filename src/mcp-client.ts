@@ -10,6 +10,12 @@
  *     { "name": "remote", "transport": "http", "url": "http://localhost:3001/mcp" }
  *   ]
  * }
+ *
+ * For stdio servers, every server has ONE persistent stdout reader that
+ * dispatches messages to a `pending` map keyed by JSON-RPC id. This avoids
+ * the cross-talk bug that the previous "first matching message wins"
+ * design suffered from when multiple in-flight requests shared the
+ * same pipe.
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -18,6 +24,13 @@ import { join } from 'node:path';
 import { getConfigDir } from './config.js';
 import type { ChatCompletionTool } from 'openai/resources/index.js';
 
+interface JsonRpcMessage {
+  jsonrpc?: string;
+  id?: number | string;
+  result?: unknown;
+  error?: { message: string };
+}
+
 /**
  * Newline-delimited JSON-RPC buffer.
  * Handles TCP chunks that may not align with message boundaries.
@@ -25,16 +38,16 @@ import type { ChatCompletionTool } from 'openai/resources/index.js';
 class JsonRpcBuffer {
   private buffer = '';
 
-  feed(chunk: string): object[] {
+  feed(chunk: string): JsonRpcMessage[] {
     this.buffer += chunk;
-    const messages: object[] = [];
+    const messages: JsonRpcMessage[] = [];
     const lines = this.buffer.split('\n');
     this.buffer = lines.pop() || ''; // keep incomplete line
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
       try {
-        messages.push(JSON.parse(trimmed));
+        messages.push(JSON.parse(trimmed) as JsonRpcMessage);
       } catch (_) { /* intentionally ignored: skip non-JSON lines */ }
     }
     return messages;
@@ -57,11 +70,21 @@ interface McpTool {
   serverName: string;
 }
 
+interface PendingRequest {
+  resolve: (msg: JsonRpcMessage) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 interface McpServer {
   config: McpServerConfig;
   process?: ChildProcess;
   tools: McpTool[];
   ready: boolean;
+  /** Per-server JSON-RPC dispatcher state (stdio only). */
+  buffer?: JsonRpcBuffer;
+  pending?: Map<number, PendingRequest>;
+  nextId?: number;
 }
 
 const servers: Map<string, McpServer> = new Map();
@@ -90,7 +113,6 @@ export async function initMcpServers(): Promise<void> {
     if (config.transport === 'stdio' && config.command) {
       await connectStdioServer(config);
     }
-    // HTTP transport: tools are fetched on-demand
     if (config.transport === 'http' && config.url) {
       await connectHttpServer(config);
     }
@@ -98,97 +120,104 @@ export async function initMcpServers(): Promise<void> {
 }
 
 /**
+ * Send a JSON-RPC request to a stdio MCP server and await the matching
+ * response (matched by `id`). Cleans up pending state on timeout.
+ */
+function stdioRequest(server: McpServer, method: string, params: unknown, timeoutMs = 30000): Promise<JsonRpcMessage> {
+  if (!server.process || !server.pending || server.nextId === undefined) {
+    return Promise.reject(new Error('MCP server not initialized for stdio'));
+  }
+  const id = server.nextId++;
+  const request = JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n';
+
+  return new Promise<JsonRpcMessage>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      server.pending?.delete(id);
+      reject(new Error(`MCP request timeout (${method})`));
+    }, timeoutMs);
+
+    server.pending!.set(id, { resolve, reject, timer });
+    try {
+      server.process!.stdin?.write(request);
+    } catch (e) {
+      server.pending?.delete(id);
+      clearTimeout(timer);
+      reject(e as Error);
+    }
+  });
+}
+
+/**
  * Connect to a stdio MCP server.
  */
 async function connectStdioServer(config: McpServerConfig): Promise<void> {
-  const server: McpServer = { config, tools: [], ready: false };
+  const server: McpServer = {
+    config,
+    tools: [],
+    ready: false,
+    buffer: new JsonRpcBuffer(),
+    pending: new Map(),
+    nextId: 1,
+  };
 
   try {
     const child = spawn(config.command!, config.args || [], {
       env: { ...process.env, ...config.env },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-
     server.process = child;
-    const buffer = new JsonRpcBuffer();
 
-    // Send initialize request
-    const initRequest = JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: {
-        protocolVersion: '2024-11-05',
-        capabilities: {},
-        clientInfo: { name: 'bobo-cli', version: '1.5.0' },
-      },
-    }) + '\n';
-
-    child.stdin?.write(initRequest);
-
-    // Read init response with timeout
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('timeout')), 10000);
-      const handler = (chunk: Buffer) => {
-        const messages = buffer.feed(chunk.toString());
-        for (const msg of messages) {
-          if ((msg as { id?: number }).id === 1) {
-            clearTimeout(timeout);
-            child.stdout?.removeListener('data', handler);
-            resolve();
-            return;
-          }
-        }
-      };
-      child.stdout?.on('data', handler);
-      child.on('error', (err) => {
-        clearTimeout(timeout);
-        reject(err);
-      });
-    });
-
-    // Request tools list
-    const toolsRequest = JSON.stringify({
-      jsonrpc: '2.0',
-      id: 2,
-      method: 'tools/list',
-      params: {},
-    }) + '\n';
-
-    child.stdin?.write(toolsRequest);
-
-    const toolsResponse = await new Promise<object>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('timeout')), 10000);
-      const handler = (chunk: Buffer) => {
-        const messages = buffer.feed(chunk.toString());
-        for (const msg of messages) {
-          if ((msg as { id?: number }).id === 2) {
-            clearTimeout(timeout);
-            child.stdout?.removeListener('data', handler);
-            resolve(msg);
-            return;
-          }
-        }
-      };
-      child.stdout?.on('data', handler);
-    });
-
-    try {
-      const parsed = toolsResponse as { result?: { tools?: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }> } };
-      if (parsed.result?.tools) {
-        server.tools = parsed.result.tools.map((t) => ({
-          name: t.name,
-          description: t.description || '',
-          inputSchema: t.inputSchema || { type: 'object', properties: {} },
-          serverName: config.name,
-        }));
+    // Single persistent reader: dispatch each message to its pending request
+    // by JSON-RPC id. Anything without an id (notifications) is ignored.
+    child.stdout?.on('data', (chunk: Buffer) => {
+      const messages = server.buffer!.feed(chunk.toString());
+      for (const msg of messages) {
+        if (typeof msg.id !== 'number') continue;
+        const pending = server.pending!.get(msg.id);
+        if (!pending) continue;
+        clearTimeout(pending.timer);
+        server.pending!.delete(msg.id);
+        pending.resolve(msg);
       }
-    } catch (_) { /* intentionally ignored: no tools in response */ }
+    });
+
+    // Reject all pending requests if the child dies.
+    const failPending = (err: Error) => {
+      for (const [id, pending] of server.pending!) {
+        clearTimeout(pending.timer);
+        server.pending!.delete(id);
+        pending.reject(err);
+      }
+    };
+    child.on('error', failPending);
+    child.on('exit', () => failPending(new Error('MCP server exited')));
+
+    // Initialize handshake.
+    await stdioRequest(server, 'initialize', {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: { name: 'bobo-cli', version: '1.5.0' },
+    }, 10000);
+
+    // Tools list.
+    const toolsResponse = await stdioRequest(server, 'tools/list', {}, 10000);
+    const parsed = toolsResponse as { result?: { tools?: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }> } };
+    if (parsed.result?.tools) {
+      server.tools = parsed.result.tools.map((t) => ({
+        name: t.name,
+        description: t.description || '',
+        inputSchema: t.inputSchema || { type: 'object', properties: {} },
+        serverName: config.name,
+      }));
+    }
 
     server.ready = true;
     servers.set(config.name, server);
   } catch (_) {
     /* intentionally ignored: server failed to connect, skip it */
+    if (server.process) {
+      try { server.process.kill(); } catch (_) { /* already dead */ }
+    }
   }
 }
 
@@ -269,38 +298,12 @@ export async function executeMcpTool(
 
   try {
     if (server.config.transport === 'stdio' && server.process) {
-      const request = JSON.stringify({
-        jsonrpc: '2.0',
-        id: Date.now(),
-        method: 'tools/call',
-        params: { name: toolName, arguments: args },
-      }) + '\n';
-
-      server.process.stdin?.write(request);
-
-      const execBuffer = new JsonRpcBuffer();
-      const response = await new Promise<string>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('MCP tool timeout')), 30000);
-        const handler = (chunk: Buffer) => {
-          const messages = execBuffer.feed(chunk.toString());
-          for (const msg of messages) {
-            const parsed = msg as { result?: unknown; error?: { message: string } };
-            if (parsed.result || parsed.error) {
-              clearTimeout(timeout);
-              server.process?.stdout?.removeListener('data', handler);
-              resolve(JSON.stringify(msg));
-              return;
-            }
-          }
-        };
-        server.process?.stdout?.on('data', handler);
-      });
-
-      const parsed = JSON.parse(response);
+      const msg = await stdioRequest(server, 'tools/call', { name: toolName, arguments: args }, 30000);
+      const parsed = msg as { result?: { content?: Array<{ type: string; text?: string }> }; error?: { message: string } };
       if (parsed.error) return `MCP Error: ${parsed.error.message}`;
       if (parsed.result?.content) {
         return parsed.result.content
-          .map((c: { type: string; text?: string }) => c.text || '')
+          .map((c) => c.text || '')
           .join('\n');
       }
       return JSON.stringify(parsed.result);
@@ -337,6 +340,14 @@ export async function executeMcpTool(
  */
 export function shutdownMcpServers(): void {
   for (const server of servers.values()) {
+    // Reject any in-flight pending requests so callers don't hang.
+    if (server.pending) {
+      for (const [id, pending] of server.pending) {
+        clearTimeout(pending.timer);
+        server.pending.delete(id);
+        pending.reject(new Error('MCP server shutting down'));
+      }
+    }
     if (server.process) {
       try { server.process.kill(); } catch (_) { /* intentionally ignored: process may already be dead */ }
     }

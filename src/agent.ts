@@ -52,6 +52,34 @@ export interface AgentOptions {
   onAutoCompact?: () => void;
   /** Image attachments for multimodal input */
   images?: Array<{ base64: string; mediaType: string }>;
+  /**
+   * Restrict the agent to a fixed set of tool names. The model will only
+   * see definitions in this list, AND any tool call outside the allowlist
+   * is hard-rejected at execution time (don't trust the model). Pass
+   * `['*']` or omit for full access. Use for sub-agent role isolation.
+   */
+  allowedTools?: string[];
+}
+
+/**
+ * Filter the combined tool definitions by an allowlist. Returns the input
+ * unchanged when the allowlist is missing or contains '*'.
+ */
+function filterTools(
+  defs: Array<{ type: 'function'; function: { name: string } }>,
+  allowed?: string[],
+): typeof defs {
+  if (!allowed || allowed.length === 0 || allowed.includes('*')) return defs;
+  const set = new Set(allowed);
+  return defs.filter(d => set.has(d.function.name));
+}
+
+/**
+ * Returns true if `name` is permitted by the allowlist (missing/`*` ⇒ all).
+ */
+function isToolAllowed(name: string, allowed?: string[]): boolean {
+  if (!allowed || allowed.length === 0 || allowed.includes('*')) return true;
+  return allowed.includes(name);
 }
 
 /**
@@ -213,7 +241,7 @@ export async function runAgent(
         const stream = await client.chat.completions.create({
           model,
           messages,
-          tools: [...toolDefinitions, ...getMcpToolDefinitions()],
+          tools: filterTools([...toolDefinitions, ...getMcpToolDefinitions()], options.allowedTools),
           max_tokens: config.maxTokens,
           stream: true,
           stream_options: { include_usage: true },
@@ -275,7 +303,7 @@ export async function runAgent(
         const completion = await client.chat.completions.create({
           model,
           messages,
-          tools: [...toolDefinitions, ...getMcpToolDefinitions()],
+          tools: filterTools([...toolDefinitions, ...getMcpToolDefinitions()], options.allowedTools),
           max_tokens: config.maxTokens,
           stream: false,
         });
@@ -359,7 +387,11 @@ export async function runAgent(
         // Route to MCP, advanced, browser, or built-in tool
         // MCP and browser tools bypass governance (they have own security)
         let result: string;
-        if (isMcpTool(tc.name)) {
+        if (!isToolAllowed(tc.name, options.allowedTools)) {
+          result = `⛔ Tool blocked: "${tc.name}" is not permitted for this agent role`;
+          spinner.stop();
+          if (!options.quiet) printToolResult(result);
+        } else if (isMcpTool(tc.name)) {
           result = await executeMcpTool(tc.name, args);
           spinner.stop();
           if (!options.quiet) printToolResult(result);

@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, readdirSync } from 'node:fs';
-import { resolve, dirname, join } from 'node:path';
-import { execSync, execFileSync } from 'node:child_process';
+import { dirname, join } from 'node:path';
+import { execSync } from 'node:child_process';
 import { glob } from 'glob';
 import { saveMemory, searchMemory } from '../memory.js';
 import { plannerToolDefinitions, executePlannerTool, isPlannerTool } from '../planner.js';
@@ -11,7 +11,10 @@ import { processToolDefinitions, isProcessTool, executeProcessTool } from './pro
 import { gitAdvancedToolDefinitions, isGitAdvancedTool, executeGitAdvancedTool } from './git-advanced.js';
 import { browserToolDefinitions, isBrowserTool, executeBrowserTool } from './browser.js';
 import { claudeCodeToolDefinitions, isClaudeCodeTool, executeClaudeCodeTool, isClaudeCodeAvailable } from './claude-code.js';
+import { safeResolvePath, validateShellCommand, runGit, SafetyError } from './safety.js';
 import type { ChatCompletionTool } from 'openai/resources/index.js';
+
+const READ_FILE_DEFAULT_LIMIT = 500;
 
 // ─── Core Tool Definitions ───────────────────────────────────
 
@@ -239,7 +242,7 @@ export const toolDefinitions: ChatCompletionTool[] = [
 
 // ─── Unified Tool Execution ──────────────────────────────────
 
-export function executeTool(name: string, args: Record<string, unknown>): string {
+export function executeTool(name: string, args: Record<string, unknown>): string | Promise<string> {
   try {
     // Check delegated tools first
     if (isPlannerTool(name)) return executePlannerTool(name, args);
@@ -293,26 +296,72 @@ export function executeTool(name: string, args: Record<string, unknown>): string
 
 // ─── Core Tool Implementations ───────────────────────────────
 
-function resolvePath(p: string): string {
-  return resolve(process.cwd(), p);
+function resolveCwdArg(arg: unknown): string {
+  if (arg === undefined || arg === null || arg === '') return process.cwd();
+  return safeResolvePath(arg);
 }
 
 function readFile(args: Record<string, unknown>): string {
-  const filePath = resolvePath(args.path as string);
-  if (!existsSync(filePath)) return `File not found: ${filePath}`;
-  const stat = statSync(filePath);
-  if (stat.isDirectory()) return `Path is a directory: ${filePath}`;
+  let filePath: string;
+  try {
+    filePath = safeResolvePath(args.path);
+  } catch (e) {
+    return (e as SafetyError).message;
+  }
 
-  const content = readFileSync(filePath, 'utf-8');
+  // Validate offset / limit before touching the filesystem.
+  const rawOffset = args.offset;
+  let offset = 1;
+  if (rawOffset !== undefined && rawOffset !== null) {
+    if (typeof rawOffset !== 'number' || !Number.isInteger(rawOffset) || rawOffset < 1) {
+      return `Invalid offset: ${String(rawOffset)} (must be a positive integer)`;
+    }
+    offset = rawOffset;
+  }
+
+  const rawLimit = args.limit;
+  let limit = READ_FILE_DEFAULT_LIMIT;
+  if (rawLimit !== undefined && rawLimit !== null) {
+    if (typeof rawLimit !== 'number' || !Number.isInteger(rawLimit) || rawLimit <= 0) {
+      return `Invalid limit: ${String(rawLimit)} (must be a positive integer)`;
+    }
+    limit = rawLimit;
+  }
+
+  // Single try/catch instead of existsSync+statSync+readFileSync (TOCTOU).
+  let content: string;
+  try {
+    const stat = statSync(filePath);
+    if (stat.isDirectory()) return `Path is a directory: ${filePath}`;
+    content = readFileSync(filePath, 'utf-8');
+  } catch (e) {
+    const err = e as { code?: string; message?: string };
+    if (err.code === 'ENOENT') return `File not found: ${filePath}`;
+    return `Read error: ${err.message ?? String(e)}`;
+  }
+
   const lines = content.split('\n');
-  const offset = ((args.offset as number) || 1) - 1;
-  const limit = (args.limit as number) || lines.length;
-  const slice = lines.slice(offset, offset + limit);
-  return slice.map((line, i) => `${offset + i + 1} | ${line}`).join('\n');
+  const startIdx = offset - 1;
+  if (startIdx >= lines.length) {
+    return `Offset ${offset} is past end of file (${lines.length} lines)`;
+  }
+  const slice = lines.slice(startIdx, startIdx + limit);
+  const body = slice.map((line, i) => `${startIdx + i + 1} | ${line}`).join('\n');
+
+  const remaining = lines.length - (startIdx + slice.length);
+  if (remaining > 0) {
+    return `${body}\n\n... (${remaining} more lines, use offset=${startIdx + slice.length + 1} to continue)`;
+  }
+  return body;
 }
 
 function writeFile(args: Record<string, unknown>): string {
-  const filePath = resolvePath(args.path as string);
+  let filePath: string;
+  try {
+    filePath = safeResolvePath(args.path);
+  } catch (e) {
+    return (e as SafetyError).message;
+  }
   const dir = dirname(filePath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(filePath, args.content as string);
@@ -320,7 +369,12 @@ function writeFile(args: Record<string, unknown>): string {
 }
 
 function editFile(args: Record<string, unknown>): string {
-  const filePath = resolvePath(args.path as string);
+  let filePath: string;
+  try {
+    filePath = safeResolvePath(args.path);
+  } catch (e) {
+    return (e as SafetyError).message;
+  }
   if (!existsSync(filePath)) return `File not found: ${filePath}`;
   const content = readFileSync(filePath, 'utf-8');
   const oldText = args.oldText as string;
@@ -350,12 +404,24 @@ function searchFiles(args: Record<string, unknown>): string {
     return files.slice(0, maxResults).join('\n');
   }
 
-  const regex = new RegExp(grepPattern, 'i');
+  let regex: RegExp;
+  try {
+    regex = new RegExp(grepPattern, 'i');
+  } catch (e) {
+    return `Invalid grep regex: ${(e as Error).message}`;
+  }
+
   const results: string[] = [];
   for (const file of files) {
     if (results.length >= maxResults) break;
+    let abs: string;
     try {
-      const content = readFileSync(resolvePath(file), 'utf-8');
+      abs = safeResolvePath(file);
+    } catch (_) {
+      continue; // glob produced a path outside cwd — skip
+    }
+    try {
+      const content = readFileSync(abs, 'utf-8');
       const lines = content.split('\n');
       for (let i = 0; i < lines.length; i++) {
         if (regex.test(lines[i])) {
@@ -369,7 +435,12 @@ function searchFiles(args: Record<string, unknown>): string {
 }
 
 function listDirectory(args: Record<string, unknown>): string {
-  const dirPath = resolvePath((args.path as string) || '.');
+  let dirPath: string;
+  try {
+    dirPath = args.path ? safeResolvePath(args.path) : process.cwd();
+  } catch (e) {
+    return (e as SafetyError).message;
+  }
   if (!existsSync(dirPath)) return `Directory not found: ${dirPath}`;
   try {
     // Cross-platform: use Node.js fs instead of shell commands
@@ -398,8 +469,14 @@ function listDirectory(args: Record<string, unknown>): string {
 }
 
 function shellExec(args: Record<string, unknown>): string {
-  const command = args.command as string;
-  const cwd = args.cwd ? resolvePath(args.cwd as string) : process.cwd();
+  let command: string;
+  let cwd: string;
+  try {
+    command = validateShellCommand(args.command);
+    cwd = resolveCwdArg(args.cwd);
+  } catch (e) {
+    return `shell blocked: ${(e as SafetyError).message}`;
+  }
   const timeout = ((args.timeout as number) || 30) * 1000;
 
   try {
@@ -440,85 +517,122 @@ function searchMemoryTool(args: Record<string, unknown>): string {
 
 // ─── Git Tool Implementations ────────────────────────────────
 
-function gitStatus(args: Record<string, unknown>): string {
-  const cwd = args.cwd ? resolvePath(args.cwd as string) : process.cwd();
-  try {
-    const status = execSync('git status --short', { cwd, encoding: 'utf-8', timeout: 5000 });
-    const branch = execSync('git branch --show-current', { cwd, encoding: 'utf-8', timeout: 5000 }).trim();
-    return `Branch: ${branch}\n${status.trim() || '(clean)'}`;
-  } catch (e) {
-    return `Not a git repo or git error: ${(e as Error).message}`;
+const REF_RE = /^[A-Za-z0-9._\-/@{}+~^:]+$/;
+function safeRef(name: unknown, label: string): string {
+  if (typeof name !== 'string' || name.length === 0) {
+    throw new Error(`Missing ${label}`);
   }
+  if (!REF_RE.test(name)) {
+    throw new Error(`Invalid ${label}: ${name}`);
+  }
+  return name;
+}
+
+function gitStatus(args: Record<string, unknown>): string {
+  let cwd: string;
+  try {
+    cwd = resolveCwdArg(args.cwd);
+  } catch (e) {
+    return (e as SafetyError).message;
+  }
+  const status = runGit(['status', '--short'], { cwd, timeout: 5000 });
+  const branch = runGit(['branch', '--show-current'], { cwd, timeout: 5000 });
+  if (!status.ok && !branch.ok) {
+    return `Not a git repo or git error: ${status.output}`;
+  }
+  return `Branch: ${branch.output}\n${status.output || '(clean)'}`;
 }
 
 function gitDiff(args: Record<string, unknown>): string {
-  const cwd = args.cwd ? resolvePath(args.cwd as string) : process.cwd();
-  const ref = args.ref as string | undefined;
-  const staged = args.staged as boolean | undefined;
-
-  let cmd = 'git diff';
-  if (staged) cmd += ' --staged';
-  if (ref) cmd += ` ${ref}`;
-  cmd += ' --stat';
-
+  let cwd: string;
   try {
-    const stat = execSync(cmd, { cwd, encoding: 'utf-8', timeout: 10000 });
-    return stat.trim() || '(no changes)';
+    cwd = resolveCwdArg(args.cwd);
   } catch (e) {
-    return `Git diff error: ${(e as Error).message}`;
+    return (e as SafetyError).message;
   }
+  const argv = ['diff'];
+  if (args.staged) argv.push('--staged');
+  if (args.ref !== undefined) {
+    try {
+      argv.push(safeRef(args.ref, 'ref'));
+    } catch (e) {
+      return (e as Error).message;
+    }
+  }
+  argv.push('--stat');
+  const result = runGit(argv, { cwd, timeout: 10000 });
+  if (!result.ok) return `Git diff error: ${result.output}`;
+  return result.output || '(no changes)';
 }
 
 function gitLog(args: Record<string, unknown>): string {
-  const cwd = args.cwd ? resolvePath(args.cwd as string) : process.cwd();
-  const count = (args.count as number) || 10;
-  const oneline = args.oneline !== false;
-
-  const format = oneline ? '--oneline' : '--format=%h %s (%ar) <%an>';
-
+  let cwd: string;
   try {
-    const log = execSync(`git log ${format} -${count}`, { cwd, encoding: 'utf-8', timeout: 5000 });
-    return log.trim() || '(no commits)';
+    cwd = resolveCwdArg(args.cwd);
   } catch (e) {
-    return `Git log error: ${(e as Error).message}`;
+    return (e as SafetyError).message;
   }
+  const rawCount = (args.count as number) || 10;
+  if (!Number.isInteger(rawCount) || rawCount <= 0 || rawCount > 1000) {
+    return `Invalid count: ${rawCount}`;
+  }
+  const oneline = args.oneline !== false;
+  const format = oneline ? '--oneline' : '--format=%h %s (%ar) <%an>';
+  const result = runGit(['log', format, `-${rawCount}`], { cwd, timeout: 5000 });
+  if (!result.ok) return `Git log error: ${result.output}`;
+  return result.output || '(no commits)';
 }
 
 function gitCommit(args: Record<string, unknown>): string {
-  const cwd = args.cwd ? resolvePath(args.cwd as string) : process.cwd();
+  let cwd: string;
+  try {
+    cwd = resolveCwdArg(args.cwd);
+  } catch (e) {
+    return (e as SafetyError).message;
+  }
   const message = args.message as string;
+  if (typeof message !== 'string' || message.length === 0) {
+    return 'Missing commit message';
+  }
   const addAll = args.addAll !== false;
 
-  try {
-    if (addAll) {
-      execFileSync('git', ['add', '-A'], { cwd, encoding: 'utf-8', timeout: 5000 });
-    }
-    const result = execFileSync('git', ['commit', '-m', message], {
-      cwd,
-      encoding: 'utf-8',
-      timeout: 10000,
-    });
-    return result.trim();
-  } catch (e: unknown) {
-    const err = e as { stdout?: string; stderr?: string };
-    return `Git commit error: ${err.stdout || err.stderr || (e as Error).message}`.trim();
+  if (addAll) {
+    const addResult = runGit(['add', '-A'], { cwd, timeout: 5000 });
+    if (!addResult.ok) return `Git add error: ${addResult.output}`;
   }
+  const commit = runGit(['commit', '-m', message], { cwd, timeout: 10000 });
+  if (!commit.ok) return `Git commit error: ${commit.output}`;
+  return commit.output;
 }
 
 function gitPush(args: Record<string, unknown>): string {
-  const cwd = args.cwd ? resolvePath(args.cwd as string) : process.cwd();
-  const remote = (args.remote as string) || 'origin';
-  const branch = args.branch as string | undefined;
-
+  let cwd: string;
   try {
-    const gitArgs = branch ? ['push', remote, branch] : ['push', remote];
-    const result = execFileSync('git', gitArgs, { cwd, encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] });
-    return result.trim() || 'Push successful';
-  } catch (e: unknown) {
-    const err = e as { stdout?: string; stderr?: string };
-    // git push outputs to stderr on success
-    const output = (err.stderr || '') + (err.stdout || '');
-    if (output.includes('->')) return output.trim();
-    return `Git push error: ${output || (e as Error).message}`.trim();
+    cwd = resolveCwdArg(args.cwd);
+  } catch (e) {
+    return (e as SafetyError).message;
   }
+  let remote = 'origin';
+  if (args.remote !== undefined) {
+    try {
+      remote = safeRef(args.remote, 'remote');
+    } catch (e) {
+      return (e as Error).message;
+    }
+  }
+  let branch: string | undefined;
+  if (args.branch !== undefined) {
+    try {
+      branch = safeRef(args.branch, 'branch');
+    } catch (e) {
+      return (e as Error).message;
+    }
+  }
+  const argv = branch ? ['push', remote, branch] : ['push', remote];
+  const result = runGit(argv, { cwd, timeout: 30000 });
+  if (result.ok) return result.output || 'Push successful';
+  // git push prints success messages to stderr; treat output containing "->"
+  // as informational rather than an error.
+  if (result.output.includes('->')) return result.output;
+  return `Git push error: ${result.output}`;
 }
