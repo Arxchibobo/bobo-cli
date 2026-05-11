@@ -14,9 +14,56 @@
  * - Skill routing / planning → Bobo keeps
  */
 
-import { execSync, spawn, type ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { spawn, type ChildProcess } from 'node:child_process';
 import type { ChatCompletionTool } from 'openai/resources/index.js';
+import { runProgram, safeResolvePath, SafetyError } from './safety.js';
+
+// ─── Safety constants ────────────────────────────────────────
+
+/** Env var bobo sets when delegating, so a nested bobo agent can detect recursion. */
+const DELEGATION_ENV = 'BOBO_DELEGATION_DEPTH';
+/** Maximum nested delegation depth. 0 = top-level bobo, 1 = bobo → claude → bobo allowed once. */
+const MAX_DELEGATION_DEPTH = 1;
+/** Output truncated past this many chars before being returned to the LLM. */
+const MAX_OUTPUT_CHARS = 60_000;
+/** Exec hard limit — execFile rejects past this. Larger than MAX_OUTPUT_CHARS to give us slack to truncate. */
+const EXEC_MAX_BUFFER = 5 * 1024 * 1024;
+
+const MODEL_RE = /^[A-Za-z0-9._-]+$/;
+const ALLOWED_TOOLS_RE = /^[A-Za-z0-9_,]+$/;
+const SESSION_ID_RE = /^cc-\d+$/;
+
+function getDelegationDepth(): number {
+  const raw = process.env[DELEGATION_ENV];
+  if (!raw) return 0;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+function nextDelegationEnv(): Record<string, string> {
+  return { [DELEGATION_ENV]: String(getDelegationDepth() + 1) };
+}
+
+function truncateOutput(s: string): string {
+  if (s.length <= MAX_OUTPUT_CHARS) return s;
+  const head = s.slice(0, MAX_OUTPUT_CHARS);
+  const dropped = s.length - MAX_OUTPUT_CHARS;
+  return `${head}\n\n... (truncated ${dropped} chars; raise --max-output or split the task)`;
+}
+
+function validateModel(v: unknown): string | undefined {
+  if (v === undefined || v === '' || v === null) return undefined;
+  if (typeof v !== 'string') throw new SafetyError('model must be a string');
+  if (!MODEL_RE.test(v)) throw new SafetyError(`model contains disallowed chars: ${v}`);
+  return v;
+}
+
+function validateAllowedTools(v: unknown): string | undefined {
+  if (v === undefined || v === '' || v === null) return undefined;
+  if (typeof v !== 'string') throw new SafetyError('allowedTools must be a string');
+  if (!ALLOWED_TOOLS_RE.test(v)) throw new SafetyError(`allowedTools must be comma-separated identifiers: ${v}`);
+  return v;
+}
 
 // ─── Tool Definitions ────────────────────────────────────────
 
@@ -88,23 +135,17 @@ Use for iterative development that needs multiple rounds.`,
 let claudeCodePath: string | null = null;
 
 function findClaudeCode(): string | null {
-  if (claudeCodePath !== null) return claudeCodePath;
+  if (claudeCodePath !== null) return claudeCodePath || null;
 
-  // Try common paths
-  const candidates = ['claude', 'claude-code'];
-  for (const cmd of candidates) {
-    try {
-      const result = execSync(`which ${cmd} 2>/dev/null || where ${cmd} 2>nul`, {
-        encoding: 'utf-8',
-        timeout: 5000,
-      }).trim();
-      if (result) {
-        claudeCodePath = cmd;
-        return cmd;
-      }
-    } catch (_) { /* intentionally ignored: claude-code binary not found */ }
+  // Cross-platform PATH lookup via execFile (NOT shell interpolation).
+  const lookup = process.platform === 'win32' ? 'where' : 'which';
+  for (const cmd of ['claude', 'claude-code']) {
+    const result = runProgram(lookup, [cmd], { timeout: 3000 });
+    if (result.ok && result.output.trim().length > 0) {
+      claudeCodePath = cmd;
+      return cmd;
+    }
   }
-
   claudeCodePath = '';
   return null;
 }
@@ -133,31 +174,46 @@ function claudeCodeRun(args: Record<string, unknown>): string {
     return 'Claude Code not found. Install it: npm install -g @anthropic-ai/claude-code';
   }
 
-  const task = args.task as string;
-  const cwd = (args.cwd as string) || process.cwd();
-  const model = args.model as string || '';
-  const allowedTools = args.allowedTools as string || '';
-
-  let command = `${cmd} --print`;
-  if (model) command += ` --model ${model}`;
-  if (allowedTools) command += ` --allowedTools "${allowedTools}"`;
-  command += ` "${task.replace(/"/g, '\\"')}"`;
-
-  try {
-    const result = execSync(command, {
-      cwd,
-      encoding: 'utf-8',
-      timeout: 300000, // 5 minute timeout
-      maxBuffer: 5 * 1024 * 1024, // 5MB
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    return result.trim() || '(no output)';
-  } catch (e: unknown) {
-    const err = e as { stdout?: string; stderr?: string; status?: number };
-    const output = ((err.stdout || '') + '\n' + (err.stderr || '')).trim();
-    if (output.length > 100) return output;
-    return `Claude Code error (exit ${err.status}): ${output || (e as Error).message}`;
+  // Recursion guard — refuse to delegate if we are already deep in a delegation chain.
+  if (getDelegationDepth() >= MAX_DELEGATION_DEPTH) {
+    return `claude_code blocked: delegation depth ${getDelegationDepth()} reached (max ${MAX_DELEGATION_DEPTH}). Refusing to nest further.`;
   }
+
+  const task = args.task;
+  if (typeof task !== 'string' || task.length === 0) {
+    return 'claude_code blocked: task must be a non-empty string';
+  }
+
+  let cwd: string;
+  let model: string | undefined;
+  let allowedTools: string | undefined;
+  try {
+    cwd = args.cwd ? safeResolvePath(args.cwd) : process.cwd();
+    model = validateModel(args.model);
+    allowedTools = validateAllowedTools(args.allowedTools);
+  } catch (e) {
+    return `claude_code blocked: ${(e as SafetyError).message}`;
+  }
+
+  // Argv array — never a shell string. Task goes through stdin via execFile's `input`
+  // option so it can contain quotes, backticks, $(), and other shell metachars safely.
+  const argv: string[] = ['--print'];
+  if (model) argv.push('--model', model);
+  if (allowedTools) argv.push('--allowedTools', allowedTools);
+  argv.push(task);
+
+  const result = runProgram(cmd, argv, {
+    cwd,
+    timeout: 300_000,
+    maxBuffer: EXEC_MAX_BUFFER,
+    env: { ...process.env, ...nextDelegationEnv() },
+  });
+
+  if (!result.ok) {
+    const body = truncateOutput(result.output || `exit ${result.status ?? 'unknown'}`);
+    return `Claude Code error (exit ${result.status ?? 'unknown'}):\n${body}`;
+  }
+  return truncateOutput(result.output) || '(no output)';
 }
 
 function claudeCodeSession(args: Record<string, unknown>): string {
@@ -166,14 +222,30 @@ function claudeCodeSession(args: Record<string, unknown>): string {
     return 'Claude Code not found. Install it: npm install -g @anthropic-ai/claude-code';
   }
 
-  const task = args.task as string;
-  const cwd = (args.cwd as string) || process.cwd();
+  if (getDelegationDepth() >= MAX_DELEGATION_DEPTH) {
+    return `claude_code_session blocked: delegation depth ${getDelegationDepth()} reached (max ${MAX_DELEGATION_DEPTH}).`;
+  }
+
+  const task = args.task;
+  if (typeof task !== 'string' || task.length === 0) {
+    return 'claude_code_session blocked: task must be a non-empty string';
+  }
+
+  let cwd: string;
+  try {
+    cwd = args.cwd ? safeResolvePath(args.cwd) : process.cwd();
+  } catch (e) {
+    return `claude_code_session blocked: ${(e as SafetyError).message}`;
+  }
+
   const id = `cc-${sessionCounter++}`;
 
+  // shell:false — claude is invoked directly via PATH, no shell interpolation.
   const child = spawn(cmd, ['--verbose'], {
     cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
-    shell: true,
+    shell: false,
+    env: { ...process.env, ...nextDelegationEnv() },
   });
 
   const session: ClaudeSession = {
@@ -196,29 +268,31 @@ function claudeCodeSession(args: Record<string, unknown>): string {
   child.stdout?.on('data', appendOutput);
   child.stderr?.on('data', appendOutput);
 
-  // Send initial task
   child.stdin?.write(task + '\n');
 
   sessions.set(id, session);
   return `Claude Code session started: ${id}\nSent initial task. Use claude_code_send("${id}", "message") to continue.`;
 }
 
-function claudeCodeSend(args: Record<string, unknown>): string {
-  const sessionId = args.sessionId as string;
-  const message = args.message as string;
+async function claudeCodeSend(args: Record<string, unknown>): Promise<string> {
+  const sessionId = args.sessionId;
+  const message = args.message;
+
+  if (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)) {
+    return `Invalid sessionId: must match ${SESSION_ID_RE.source}`;
+  }
+  if (typeof message !== 'string' || message.length === 0) {
+    return 'message must be a non-empty string';
+  }
 
   const session = sessions.get(sessionId);
   if (!session) return `Session "${sessionId}" not found.`;
 
   session.process.stdin?.write(message + '\n');
 
-  // Wait a moment and return recent output
-  return new Promise<string>((resolve) => {
-    setTimeout(() => {
-      const recent = session.output.slice(-30).join('\n');
-      resolve(recent || '(waiting for response...)');
-    }, 3000);
-  }) as unknown as string;
+  await new Promise<void>((resolve) => setTimeout(resolve, 3000));
+  const recent = session.output.slice(-30).join('\n');
+  return truncateOutput(recent) || '(waiting for response...)';
 }
 
 // ─── Executor ────────────────────────────────────────────────
@@ -227,7 +301,7 @@ export function isClaudeCodeTool(name: string): boolean {
   return ['claude_code', 'claude_code_session', 'claude_code_send'].includes(name);
 }
 
-export function executeClaudeCodeTool(name: string, args: Record<string, unknown>): string {
+export function executeClaudeCodeTool(name: string, args: Record<string, unknown>): string | Promise<string> {
   switch (name) {
     case 'claude_code': return claudeCodeRun(args);
     case 'claude_code_session': return claudeCodeSession(args);

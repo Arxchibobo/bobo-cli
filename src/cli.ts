@@ -509,7 +509,7 @@ Instructions:
 Keep changes minimal and focused. Do not break existing functionality.`;
 
       printLine(chalk.dim('Delegating to Claude Code...'));
-      const result = ccExec('claude_code', { task, cwd: process.cwd() });
+      const result = await ccExec('claude_code', { task, cwd: process.cwd() });
       printLine(result);
     });
 

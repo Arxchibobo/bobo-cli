@@ -207,6 +207,26 @@ const toolMetadataRegistry: Record<string, ToolMetadata> = {
     isConcurrencySafe: false,
     riskLevel: 'dangerous',
   },
+  // Sub-agent delegation — spawns external process with arbitrary filesystem
+  // access. Highest blast radius of any tool in this catalogue.
+  claude_code: {
+    name: 'claude_code',
+    isReadOnly: false,
+    isConcurrencySafe: false,
+    riskLevel: 'dangerous',
+  },
+  claude_code_session: {
+    name: 'claude_code_session',
+    isReadOnly: false,
+    isConcurrencySafe: false,
+    riskLevel: 'dangerous',
+  },
+  claude_code_send: {
+    name: 'claude_code_send',
+    isReadOnly: false,
+    isConcurrencySafe: false,
+    riskLevel: 'dangerous',
+  },
 };
 
 /**
